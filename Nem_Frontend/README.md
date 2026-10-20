@@ -175,7 +175,8 @@ The application organizes its main functionality under `src/features/`. Each fea
 
 | `components/AssetTree.jsx` | Displays a searchable tree of assets, status indicators, rule counts, and asset navigation controls. |
 | `pages/AssetsIndex.jsx` | Handles the assets landing page and navigation to an available asset. |
-| `pages/AssetDetail.jsx` | Displays an individual asset's details, live readings, monitoring rules, maintenance logbook, event history, and supported asset management actions. |
+| `pages/AssetDetail.jsx` | Displays asset status, rule bulk activation/deactivation, predefined-rule assignment and copying, and rule archival or permanent deletion alongside live readings, maintenance, and event history. |
+| `components/MaintenancePanel.jsx` | Manages schedules and maintenance records; completed records can be archived then permanently deleted, while jobs and schedules can be permanently deleted unless work is currently in progress. Scheduled deletions require double confirmation. |
 
 # 3. Configuration — `src/features/configuration/`
 
@@ -190,12 +191,12 @@ The application organizes its main functionality under `src/features/`. Each fea
 
 # 5. Monitoring Rules — `src/features/rules/`
 
-| `components/AssignMonitoringRulesModal.jsx` | Provides a modal for assigning monitoring rules.
+| `components/AssignMonitoringRulesModal.jsx` | Compatibility wrapper around the predefined-rule assignment workflow. |
 | `components/AssignMonitoringRulesModal.css` | Contains styling for the assign-monitoring-rules modal. |
-| `components/PredefinedRulesModal.jsx` | Provides a modal for viewing or selecting predefined rules. |
+| `components/PredefinedRulesModal.jsx` | Searches, filters, reviews, and assigns eligible predefined rules through the backend. |
 | `components/PredefinedRulesModal.css` | Contains styling for the predefined-rules modal. |
 | `pages/AlertRules.jsx` | Displays monitoring rules currently in alert or warning states. |
-| `pages/RuleCreatePage.jsx` | Provides the page for creating monitoring rules, according to the implemented functionality. |
+| `pages/RuleCreatePage.jsx` | Creates evaluated numeric usage-threshold rules, recurring maintenance schedules, or planned date/time maintenance jobs through their respective APIs. |
 
 # 6. Settings — `src/features/settings/`
 
@@ -292,4 +293,3 @@ Change development server settings or API proxy | `vite.config.js`
 - Do not manually edit generated `node_modules/` or `dist/` files.
 - Do not commit secrets or sensitive credentials.
 - Keep the README updated whenever routes, features, or the folder structure change.
-

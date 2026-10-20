@@ -15,8 +15,6 @@ const IconDownload = (p) => <Svg {...p}><path d="M12 3v12M7 10l5 5 5-5M4 20h16" 
 const IconEmpty = (p) => <Svg size={34} {...p}><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 10h18M8 15h3" /></Svg>;
 const Spinner = () => <span className="spin" aria-hidden="true" />;
 
-
-
 function useAppTheme() {
   const [light, setLight] = useState(
     () => document.documentElement.dataset.theme !== "dark"
@@ -256,7 +254,7 @@ export default function Plc() {
     setBusy("test");
     setConnection({
       state: "testing",
-      message: "Testing secure OPC UA connection…",
+      message: "Testing unencrypted OPC UA connection…",
     });
 
     try {
@@ -371,8 +369,8 @@ export default function Plc() {
       </div>
 
       <p className="muted lede">
-        Monitor PLC values securely. Connection settings and certificates stay
-        on the backend.
+        Monitor PLC values. This development connection does not encrypt OPC UA
+        traffic; use it only on a trusted test network.
       </p>
 
       <section className="panel plc-panel wide">
@@ -690,11 +688,12 @@ export default function Plc() {
       </section>
 
       <section className="panel plc-panel">
-        <h2>Secure connection</h2>
+        <h2>Development connection</h2>
 
         <p className="muted">
-          Uses the configured OPC UA endpoint, trusted server certificate, and
-          signed and encrypted channel. This client is read-only.
+          Uses the configured OPC UA endpoint without transport encryption or
+          certificates. This client is read-only; only use it on a trusted test
+          network.
         </p>
 
         <button
@@ -704,7 +703,7 @@ export default function Plc() {
         >
           {busy === "test"
             ? "Testing…"
-            : "Test secure connection"}
+            : "Test connection"}
         </button>
 
         {connection.message && (

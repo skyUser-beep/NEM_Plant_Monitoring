@@ -1,7 +1,7 @@
 # Groups related API endpoints together-> APIRouter , Depends-> Lets FastAPI automatically provide dependencies 
 from fastapi import APIRouter, Depends 
 # func -> Provides SQL functions such as Count(),MAX(),DISTINCT(), select-> Builds SQL SELECT queries using Python
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 #Represents a connection/session for interacting with the database
 from sqlalchemy.orm import Session
  #get_db-> Supplies the database session to an endpoint
@@ -13,7 +13,6 @@ from app.schemas.dashboard import DashboardSummary
 
 #Creating an API endpoint
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
-
 
 @router.get("/summary", response_model=DashboardSummary)
 def dashboard_summary(session: Session = Depends(get_db)) -> DashboardSummary:
@@ -64,45 +63,65 @@ def dashboard_summary(session: Session = Depends(get_db)) -> DashboardSummary:
     state_counts["unknown"] += max(0, enabled - evaluated_statuses)
     asset_alert_count = session.scalar(
         select(func.count(func.distinct(Alert.target_asset_id)))
-        .join(MonitoringRule, MonitoringRule.id == Alert.rule_id)
+        .outerjoin(MonitoringRule, MonitoringRule.id == Alert.rule_id)
         .where(
             Alert.status == "active",
             Alert.severity == "alert",
-            MonitoringRule.is_enabled.is_(True),
-            MonitoringRule.is_archived.is_(False),
+            or_(
+                Alert.maintenance_schedule_id.is_not(None),
+                and_(
+                    MonitoringRule.is_enabled.is_(True),
+                    MonitoringRule.is_archived.is_(False),
+                ),
+            ),
         )
     ) or 0
     #Counting assets currenly in alert and warning state
     asset_warning_count = session.scalar(
         select(func.count(func.distinct(Alert.target_asset_id)))
-        .join(MonitoringRule, MonitoringRule.id == Alert.rule_id)
+        .outerjoin(MonitoringRule, MonitoringRule.id == Alert.rule_id)
         .where(
             Alert.status == "active",
             Alert.severity == "warning",
-            MonitoringRule.is_enabled.is_(True),
-            MonitoringRule.is_archived.is_(False),
+            or_(
+                Alert.maintenance_schedule_id.is_not(None),
+                and_(
+                    MonitoringRule.is_enabled.is_(True),
+                    MonitoringRule.is_archived.is_(False),
+                ),
+            ),
         )
     ) or 0
     #Counting total active alerts and unacknowledged active alerts
     active_alert_count = session.scalar(
         select(func.count())
         .select_from(Alert)
-        .join(MonitoringRule, MonitoringRule.id == Alert.rule_id)
+        .outerjoin(MonitoringRule, MonitoringRule.id == Alert.rule_id)
         .where(
             Alert.status == "active",
-            MonitoringRule.is_enabled.is_(True),
-            MonitoringRule.is_archived.is_(False),
+            or_(
+                Alert.maintenance_schedule_id.is_not(None),
+                and_(
+                    MonitoringRule.is_enabled.is_(True),
+                    MonitoringRule.is_archived.is_(False),
+                ),
+            ),
         )
     ) or 0
     unacknowledged_count = session.scalar(
         select(func.count())
         .select_from(Alert)
-        .join(MonitoringRule, MonitoringRule.id == Alert.rule_id)
+        .outerjoin(MonitoringRule, MonitoringRule.id == Alert.rule_id)
         .where(
             Alert.status == "active",
             Alert.acknowledged_at.is_(None),
-            MonitoringRule.is_enabled.is_(True),
-            MonitoringRule.is_archived.is_(False),
+            or_(
+                Alert.maintenance_schedule_id.is_not(None),
+                and_(
+                    MonitoringRule.is_enabled.is_(True),
+                    MonitoringRule.is_archived.is_(False),
+                ),
+            ),
         )
     ) or 0
     return DashboardSummary(

@@ -44,7 +44,6 @@ class BackupRecord(Base):
 # Metadata for files attached to an instruction/manual/checklist document.
 class InstructionDocumentFile(Base):
     __tablename__ = "instruction_document_files"
-
     id: Mapped[int] = mapped_column(primary_key=True)
     document_id: Mapped[int] = mapped_column(
         ForeignKey("instruction_documents.id", ondelete="CASCADE"), nullable=False, index=True

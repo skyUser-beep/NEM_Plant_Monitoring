@@ -1,4 +1,5 @@
-﻿
+﻿#FastApi router that connects your react frontend to your backend and postgreSQL database
+
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -8,7 +9,7 @@ from cryptography.fernet import Fernet # encrypts and decrypts sensitive values,
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, ValidationError, field_validator 
-from sqlalchemy import select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError # Handles database constraint failures,such as duplicate collection name
 from sqlalchemy.orm import Session 
 
@@ -28,13 +29,15 @@ from app.models import (
     RuleState,
     Variable,
 )
-from app.schemas.rule import RuleCreate
-from app.services.frontend_backup import create_backup, restore_backup
-from app.services.monitoring_engine import (
-    emit_event,
-    resolve_active_rule_alerts,
-    set_rule_enabled_state,
+from app.schemas.rule import (
+    RuleCopyRequest,
+    RuleCreate,
+    RuleRead,
+    RuleSelection,
+    UsageRuleCreate,
 )
+from app.services.frontend_backup import create_backup, restore_backup
+from app.services.monitoring_engine import (emit_event,resolve_active_rule_alerts,set_rule_enabled_state,)
 from app.api.routes.rules import configured_cycle_signal_mapping, validate_targets
 from app.api.routes.monitoring import state_for_rule
 
@@ -47,7 +50,6 @@ MAX_TOTAL_UPLOAD_BYTES = 24 * 1024 * 1024
 MAX_FILES_PER_DOCUMENT = 10
 
 ALLOWED_DOCUMENT_EXTENSIONS = {".pdf", ".doc", ".docx", ".txt"}
-
 
 class ProfileUpdate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
@@ -158,6 +160,7 @@ def _rule_row(session: Session, rule: MonitoringRule) -> dict[str, Any]:
         "asset_name": asset.name if asset else "",
         "severity": rule.severity,
         "state": "activated" if rule.is_enabled else "not_activated",
+        "is_enabled": rule.is_enabled,
         "status": (
             {"normal": "ok"}.get(state.status, state.status)
             if rule.is_enabled
@@ -186,16 +189,11 @@ def _descendant_ids(session: Session, asset_id: int) -> set[int]:
 def _fernet(request: Request) -> Fernet:
     value = request.app.state.settings.settings_encryption_key.get_secret_value().strip()
     if not value:
-        raise HTTPException(
-            status_code=503,
-            detail="Email password encryption is not configured; set SETTINGS_ENCRYPTION_KEY in the backend environment.",
-        )
+        raise HTTPException( status_code=503,detail="Email password encryption is not configured; set SETTINGS_ENCRYPTION_KEY in the backend environment.",)
     try:
         return Fernet(value.encode("ascii"))
     except (ValueError, UnicodeEncodeError) as error:
-        raise HTTPException(
-            status_code=503, detail="SETTINGS_ENCRYPTION_KEY must be a valid Fernet key."
-        ) from error
+        raise HTTPException(status_code=503, detail="SETTINGS_ENCRYPTION_KEY must be a valid Fernet key.") from error
 
 #Dashboard summary endpoint
 @router.get("/summary")
@@ -251,6 +249,314 @@ def frontend_asset_rules(asset_id: int,include_children: bool = False,session: S
     ).all()
     return [_rule_row(session, rule) for rule in rules]
 
+
+def _mapped_variable(
+    session: Session,
+    source_variable_id: int | None,
+    target_asset_id: int,
+) -> Variable | None:
+    if source_variable_id is None:
+        return None
+    source = session.get(Variable, source_variable_id)
+    if source is None:
+        raise HTTPException(status_code=422, detail="The source rule variable no longer exists")
+    matches = session.scalars(
+        select(Variable).where(
+            Variable.asset_id == target_asset_id,
+            Variable.is_active.is_(True),
+            func.lower(Variable.key) == source.key.lower(),
+            Variable.data_type == source.data_type,
+        )
+    ).all()
+    if len(matches) != 1:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Rule variable '{source.key}' must have exactly one active "
+                "variable with the same key and data type on the target asset"
+            ),
+        )
+    return matches[0]
+
+
+def _rule_definition(
+    source: MonitoringRule,
+    target_asset_id: int,
+    variable: Variable | None,
+) -> dict[str, Any]:
+    return {
+        "name": source.name,
+        "description": source.description,
+        "rule_type": source.rule_type,
+        "target_asset_id": target_asset_id,
+        "variable_id": variable.id if variable else None,
+        "operator": source.operator,
+        "threshold": source.threshold,
+        "parameters": source.parameters,
+        "severity": source.severity,
+        "is_enabled": False,
+        "evaluation_interval_seconds": source.evaluation_interval_seconds,
+        "stale_after_seconds": source.stale_after_seconds,
+    }
+
+
+def _same_rule_definition(rule: MonitoringRule, definition: dict[str, Any]) -> bool:
+    return all(
+        getattr(rule, field) == definition[field]
+        for field in (
+            "name",
+            "description",
+            "rule_type",
+            "target_asset_id",
+            "variable_id",
+            "operator",
+            "threshold",
+            "parameters",
+            "severity",
+        )
+    )
+
+
+@router.get("/assets/{asset_id}/rules/predefined")
+def frontend_predefined_rules(
+    asset_id: int,
+    request: Request,
+    session: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    if session.get(Asset, asset_id) is None:
+        raise HTTPException(status_code=404, detail=f"Asset {asset_id} was not found")
+    templates = session.scalars(
+        select(MonitoringRule)
+        .where(
+            MonitoringRule.target_asset_id.is_(None),
+            MonitoringRule.is_archived.is_(False),
+        )
+        .order_by(MonitoringRule.id)
+    ).all()
+    assigned = session.scalars(
+        select(MonitoringRule).where(
+            MonitoringRule.target_asset_id == asset_id,
+            MonitoringRule.is_archived.is_(False),
+        )
+    ).all()
+    result = []
+    for template in templates:
+        reason = None
+        mapped = None
+        try:
+            if template.rule_type == "generic":
+                raise HTTPException(
+                    status_code=422,
+                    detail="This rule type has no monitoring evaluator",
+                )
+            mapped = _mapped_variable(session, template.variable_id, asset_id)
+            definition = _rule_definition(template, asset_id, mapped)
+            try:
+                validated = RuleCreate.model_validate(definition)
+            except ValidationError as error:
+                raise HTTPException(status_code=422, detail=str(error)) from error
+            validate_targets(
+                session,
+                validated.target_asset_id,
+                validated.variable_id,
+                validated.rule_type,
+                validated.operator,
+                validated.threshold,
+                validated.parameters,
+                configured_cycle_signal_mapping(request, validated.variable_id),
+            )
+        except HTTPException as error:
+            reason = str(error.detail)
+            definition = None
+        except ValidationError as error:
+            reason = str(error)
+            definition = None
+        duplicate = bool(
+            definition
+            and any(_same_rule_definition(rule, definition) for rule in assigned)
+        )
+        result.append(
+            {
+                **RuleRead.model_validate(template).model_dump(mode="json"),
+                "assigned": duplicate,
+                "unavailable_reason": reason,
+                "mapped_variable_name": mapped.name if mapped else None,
+            }
+        )
+    return result
+
+
+@router.post("/assets/{asset_id}/rules/assign", status_code=201)
+def frontend_assign_predefined_rules(
+    asset_id: int,
+    payload: RuleSelection,
+    request: Request,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    if session.get(Asset, asset_id) is None:
+        raise HTTPException(status_code=404, detail=f"Asset {asset_id} was not found")
+    templates = session.scalars(
+        select(MonitoringRule)
+        .where(
+            MonitoringRule.id.in_(payload.rule_ids),
+            MonitoringRule.target_asset_id.is_(None),
+            MonitoringRule.is_archived.is_(False),
+        )
+        .order_by(MonitoringRule.id)
+        .with_for_update()
+    ).all()
+    if len(templates) != len(payload.rule_ids):
+        raise HTTPException(
+            status_code=404,
+            detail="One or more selected predefined rules are unavailable",
+        )
+    existing = session.scalars(
+        select(MonitoringRule).where(
+            MonitoringRule.target_asset_id == asset_id,
+            MonitoringRule.is_archived.is_(False),
+        )
+    ).all()
+    prepared: list[tuple[MonitoringRule, dict[str, Any]]] = []
+    already_assigned = []
+    for template in templates:
+        if template.rule_type == "generic":
+            raise HTTPException(
+                status_code=422,
+                detail=f"Rule '{template.name}' has no monitoring evaluator",
+            )
+        mapped = _mapped_variable(session, template.variable_id, asset_id)
+        definition = _rule_definition(template, asset_id, mapped)
+        try:
+            validated = RuleCreate.model_validate(definition)
+        except ValidationError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        validate_targets(
+            session,
+            validated.target_asset_id,
+            validated.variable_id,
+            validated.rule_type,
+            validated.operator,
+            validated.threshold,
+            validated.parameters,
+            configured_cycle_signal_mapping(request, validated.variable_id),
+        )
+        if any(_same_rule_definition(rule, definition) for rule in existing):
+            already_assigned.append(template.id)
+            continue
+        prepared.append((template, definition))
+        existing.append(MonitoringRule(**definition))
+
+    created = []
+    for template, definition in prepared:
+        rule = MonitoringRule(**definition)
+        session.add(rule)
+        session.flush()
+        emit_event(
+            session,
+            event_type="rule_created",
+            message=f"Rule '{rule.name}' assigned to asset {asset_id}.",
+            occurred_at=datetime.now(timezone.utc),
+            asset_id=asset_id,
+            rule_id=rule.id,
+        )
+        created.append({"template_rule_id": template.id, "id": rule.id, "name": rule.name})
+    session.commit()
+    return {"created": created, "already_assigned": already_assigned}
+
+
+@router.post("/assets/{asset_id}/rules/copy", status_code=201)
+def frontend_copy_asset_rules(
+    asset_id: int,
+    payload: RuleCopyRequest,
+    request: Request,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    if session.get(Asset, asset_id) is None:
+        raise HTTPException(status_code=404, detail=f"Asset {asset_id} was not found")
+    if payload.source_asset_id == asset_id:
+        raise HTTPException(status_code=422, detail="Source and target assets must be different")
+    if session.get(Asset, payload.source_asset_id) is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Source asset {payload.source_asset_id} was not found",
+        )
+    source_rules = session.scalars(
+        select(MonitoringRule)
+        .where(
+            MonitoringRule.id.in_(payload.rule_ids),
+            MonitoringRule.target_asset_id == payload.source_asset_id,
+            MonitoringRule.is_archived.is_(False),
+        )
+        .order_by(MonitoringRule.id)
+        .with_for_update()
+    ).all()
+    if len(source_rules) != len(payload.rule_ids):
+        raise HTTPException(
+            status_code=404,
+            detail="One or more selected source rules are unavailable",
+        )
+    selected = [
+        rule
+        for rule in source_rules
+        if payload.include_disabled or rule.is_enabled
+    ]
+    existing = session.scalars(
+        select(MonitoringRule).where(
+            MonitoringRule.target_asset_id == asset_id,
+            MonitoringRule.is_archived.is_(False),
+        )
+    ).all()
+    prepared = []
+    already_copied = []
+    for source in selected:
+        if source.rule_type == "generic":
+            raise HTTPException(
+                status_code=422,
+                detail=f"Rule '{source.name}' has no monitoring evaluator and cannot be copied",
+            )
+        mapped = _mapped_variable(session, source.variable_id, asset_id)
+        definition = _rule_definition(source, asset_id, mapped)
+        try:
+            validated = RuleCreate.model_validate(definition)
+        except ValidationError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        validate_targets(
+            session,
+            validated.target_asset_id,
+            validated.variable_id,
+            validated.rule_type,
+            validated.operator,
+            validated.threshold,
+            validated.parameters,
+            configured_cycle_signal_mapping(request, validated.variable_id),
+        )
+        if any(_same_rule_definition(rule, definition) for rule in existing):
+            already_copied.append(source.id)
+            continue
+        prepared.append((source, definition))
+        existing.append(MonitoringRule(**definition))
+
+    created = []
+    for source, definition in prepared:
+        rule = MonitoringRule(**definition)
+        session.add(rule)
+        session.flush()
+        emit_event(
+            session,
+            event_type="rule_created",
+            message=f"Rule '{rule.name}' copied from asset {payload.source_asset_id}.",
+            occurred_at=datetime.now(timezone.utc),
+            asset_id=asset_id,
+            rule_id=rule.id,
+        )
+        created.append({"source_rule_id": source.id, "id": rule.id, "name": rule.name})
+    session.commit()
+    return {
+        "created": created,
+        "already_copied": already_copied,
+        "excluded_disabled": len(source_rules) - len(selected),
+    }
+
 #Creating a new rules for a specific asset
 @router.post("/assets/{asset_id}/rules", status_code=201)
 def frontend_create_asset_rule(
@@ -286,86 +592,126 @@ def frontend_create_asset_rule(
 def frontend_create_usage_rule(
     asset_id: int,
     payload: UsageRuleCreate,
+    request: Request,
     session: Session = Depends(get_db),
 ) -> dict[str, Any]:
     asset = session.get(Asset, asset_id)
     if asset is None:
         raise HTTPException(status_code=404, detail=f"Asset {asset_id} was not found")
 
-    rule = MonitoringRule(
+    variable = session.get(Variable, payload.variable_id)
+    if variable is None:
+        raise HTTPException(status_code=404, detail=f"Variable {payload.variable_id} was not found")
+    if not variable.is_active:
+        raise HTTPException(status_code=422, detail="Usage thresholds require an active numeric variable")
+    rule_payload = RuleCreate(
         name=payload.name,
         description=payload.description,
-        rule_type="generic",
+        rule_type="parameter_threshold",
         target_asset_id=asset_id,
-        variable_id=None,
-        operator=None,
-        threshold=None,
-        parameters={"kind": "usage_based", "usage_limit": payload.usage_limit},
+        variable_id=payload.variable_id,
+        operator=">=",
+        threshold=payload.usage_limit,
         severity=payload.severity,
         is_enabled=True,
     )
+    validate_targets(
+        session,
+        rule_payload.target_asset_id,
+        rule_payload.variable_id,
+        rule_payload.rule_type,
+        rule_payload.operator,
+        rule_payload.threshold,
+        rule_payload.parameters,
+        configured_cycle_signal_mapping(request, rule_payload.variable_id),
+    )
+    rule = MonitoringRule(**rule_payload.model_dump())
     session.add(rule)
+    session.flush()
+    emit_event(
+        session,
+        event_type="rule_created",
+        message=f"Usage threshold rule '{rule.name}' created.",
+        occurred_at=datetime.now(timezone.utc),
+        asset_id=asset_id,
+        rule_id=rule.id,
+    )
     session.commit()
     session.refresh(rule)
     return _rule_row(session, rule)
 
 
-@router.post("/assets/{asset_id}/rules/time", status_code=201)
+@router.post("/assets/{asset_id}/rules/time", status_code=410)
 def frontend_create_time_rule(
     asset_id: int,
-    payload: TimeRuleCreate,
     session: Session = Depends(get_db),
-) -> dict[str, Any]:
-    asset = session.get(Asset, asset_id)
-    if asset is None:
+) -> None:
+    if session.get(Asset, asset_id) is None:
         raise HTTPException(status_code=404, detail=f"Asset {asset_id} was not found")
-
-    rule = MonitoringRule(
-        name=payload.name,
-        description=payload.description,
-        rule_type="generic",
-        target_asset_id=asset_id,
-        variable_id=None,
-        operator=None,
-        threshold=None,
-        parameters={
-            "kind": "time_based",
-            "current_time": payload.current_time.isoformat(),
-            "end_time": payload.end_time.isoformat(),
-        },
-        severity=payload.severity,
-        is_enabled=True,
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "Time-based maintenance is not a monitoring rule. Create a planned "
+            "maintenance record through POST /maintenance instead."
+        ),
     )
-    session.add(rule)
-    session.commit()
-    session.refresh(rule)
-    return _rule_row(session, rule)
 
 
 @router.post("/assets/{asset_id}/rules/bulk")
 def frontend_bulk_rule_state(
     asset_id: int,
     payload: dict[str, str],
+    request: Request,
+    include_children: bool = False,
     session: Session = Depends(get_db),
-) -> dict[str, int]:
+) -> dict[str, Any]:
     if session.get(Asset, asset_id) is None:
         raise HTTPException(status_code=404, detail=f"Asset {asset_id} was not found")
     state = payload.get("state")
     if state not in {"activated", "not_activated"}:
         raise HTTPException(status_code=422, detail="State must be activated or not_activated")
+    asset_ids = _descendant_ids(session, asset_id) if include_children else {asset_id}
     rules = session.scalars(
-        select(MonitoringRule).where(
-            MonitoringRule.target_asset_id == asset_id,
+        select(MonitoringRule)
+        .where(
+            MonitoringRule.target_asset_id.in_(asset_ids),
             MonitoringRule.is_archived.is_(False),
         )
+        .order_by(MonitoringRule.id)
+        .with_for_update()
     ).all()
     enabled = state == "activated"
+    updated = []
+    skipped = []
     for rule in rules:
-        if rule.is_enabled != enabled:
-            #uses the existing service and commits the changes
+        if rule.is_enabled == enabled:
+            continue
+        if enabled:
+            try:
+                if rule.rule_type == "generic":
+                    raise HTTPException(
+                        status_code=422,
+                        detail="This rule type has no monitoring evaluator",
+                    )
+                validate_targets(
+                    session,
+                    rule.target_asset_id,
+                    rule.variable_id,
+                    rule.rule_type,
+                    rule.operator,
+                    rule.threshold,
+                    rule.parameters,
+                    configured_cycle_signal_mapping(request, rule.variable_id),
+                )
+            except HTTPException as error:
+                skipped.append({"rule_id": rule.id, "name": rule.name, "reason": str(error.detail)})
+                continue
             set_rule_enabled_state(session, rule, enabled)
+        else:
+            set_rule_enabled_state(session, rule, enabled)
+        updated.append(rule.id)
     session.commit()
-    return {"updated": len(rules)}
+    return {"updated": len(updated), "updated_rule_ids": updated, "skipped": skipped}
 
 #Deleting a rule(Soft deletion,also called archiving rather than deleting the db row)
 @router.delete("/rules/{rule_id}", status_code=204)
@@ -387,6 +733,64 @@ def frontend_delete_rule(rule_id: int, session: Session = Depends(get_db)) -> No
         occurred_at=datetime.now(timezone.utc),
         asset_id=rule.target_asset_id,
         rule_id=rule.id,
+    )
+    session.commit()
+
+
+@router.delete("/rules/{rule_id}/permanent", status_code=204)
+def frontend_hard_delete_rule(
+    rule_id: int,
+    session: Session = Depends(get_db),
+) -> None:
+    rule = session.scalar(
+        select(MonitoringRule)
+        .where(MonitoringRule.id == rule_id)
+        .with_for_update()
+    )
+    if rule is None:
+        raise HTTPException(status_code=404, detail=f"Rule {rule_id} was not found")
+    if rule.is_enabled:
+        raise HTTPException(
+            status_code=409,
+            detail="Deactivate the rule before permanently deleting it.",
+        )
+
+    alert_ids = session.scalars(
+        select(Alert.id).where(Alert.rule_id == rule.id)
+    ).all()
+    if alert_ids and session.scalar(
+        select(MaintenanceRecord.id)
+        .where(MaintenanceRecord.alert_id.in_(alert_ids))
+        .limit(1)
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This rule has maintenance records linked to its alerts. "
+                "Remove those links before permanently deleting the rule."
+            ),
+        )
+
+    deleted_name = rule.name
+    deleted_asset_id = rule.target_asset_id
+    event_references = [MonitoringEvent.rule_id == rule.id]
+    if alert_ids:
+        event_references.append(MonitoringEvent.alert_id.in_(alert_ids))
+    session.execute(
+        delete(MonitoringEvent).where(or_(*event_references))
+    )
+    if alert_ids:
+        session.execute(delete(Alert).where(Alert.id.in_(alert_ids)))
+    session.execute(delete(RuleState).where(RuleState.rule_id == rule.id))
+    session.delete(rule)
+    session.flush()
+    emit_event(
+        session,
+        event_type="rule_permanently_deleted",
+        message=f"Monitoring rule '{deleted_name}' was permanently deleted.",
+        occurred_at=datetime.now(timezone.utc),
+        asset_id=deleted_asset_id,
+        metadata={"deleted_rule_id": rule_id, "deleted_rule_name": deleted_name},
     )
     session.commit()
 
@@ -428,6 +832,10 @@ def frontend_add_logbook_entry(
         notes=text_value if len(text_value) > 200 else None,
         performed_by="Dashboard",
         performed_at=datetime.now(timezone.utc),
+        actual_completed_at=datetime.now(timezone.utc),
+        maintenance_type="inspection",
+        status="completed",
+        priority="medium",
     )
     session.add(record)
     session.commit()

@@ -1,9 +1,10 @@
 ﻿
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useOutletContext, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import CopyRulesModal from "../components/CopyRulesModal.jsx";
 import PredefinedRulesModal from "../../rules/components/PredefinedRulesModal.jsx";
 import { api } from "../../../services/api.js";
+import MaintenancePanel from "../components/MaintenancePanel.jsx";
 import {
   conditionText,
   formatDuration,
@@ -149,20 +150,6 @@ const ruleFields = (variables, cycleVariableIds) => [
   },
 ];
 
-const TIME_RULE_FIELDS = () => [
-  { key: "name", label: "Rule name", required: true, placeholder: "e.g. Daily operating window" },
-  { key: "description", label: "Description", type: "textarea", placeholder: "What should this rule watch?" },
-  { key: "current_time", label: "Current time", type: "time", required: true },
-  { key: "end_time", label: "End time", type: "time", required: true },
-  {
-    key: "severity",
-    label: "Severity",
-    type: "select",
-    default: "warning",
-    options: [["warning", "Warning"], ["alert", "Alert"]],
-  },
-];
-
 const LOG_FIELDS = [
   {
     key: "text",
@@ -230,6 +217,9 @@ export default function AssetDetail() {
   const [filter, setFilter] = useState("");
   const [showFilter, setShowFilter] = useState(false);
   const [menu, setMenu] = useState(false);
+  const [bulkSaving, setBulkSaving] = useState(false);
+  const [deletingRuleId, setDeletingRuleId] = useState(null);
+  const [actionNotice, setActionNotice] = useState("");
   const [sortMenu, setSortMenu] = useState(false);
   const [modal, setModal] = useState(null);
   const [showPredefinedRules, setShowPredefinedRules] = useState(false);
@@ -244,16 +234,16 @@ export default function AssetDetail() {
   const [events, setEvents] = useState([]);
   const [loadError, setLoadError] = useState("");
   const navigate = useNavigate();
+  const location = useLocation();
 
   
   const seq = useRef(0);
-  const liveLoading = useRef(false);
   const readingRequest = useRef(null);
+  const bulkRequest = useRef(false);
+  const permanentDeleteRequest = useRef(false);
 
   
   const loadLive = useCallback(async () => {
-    if (liveLoading.current) return;
-    liveLoading.current = true;
     const mine = ++seq.current;
 
     try {
@@ -310,8 +300,6 @@ export default function AssetDetail() {
       }
     } catch (error) {
       setLoadError(error.message || "Unable to refresh asset monitoring.");
-    } finally {
-      liveLoading.current = false;
     }
   }, [assetId, children]);
 
@@ -398,6 +386,14 @@ export default function AssetDetail() {
       seq.current += 1;
     };
   }, [assetId, loadVariables, loadLogs, loadLive, loadLatestReadings]);
+
+  useEffect(() => {
+    const notice = location.state?.createdNotice;
+    if (!notice) return;
+    setActionNotice(notice);
+    setTab("logbook");
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.pathname, location.state, navigate]);
 
 
   useEffect(() => {
@@ -622,6 +618,32 @@ const filteredLogs = [...logs]
     }
   };
 
+  const permanentlyDeleteRule = async (rule) => {
+    if (permanentDeleteRequest.current) return;
+    if (
+      !window.confirm(
+        `Permanently delete “${rule.name}”? This irreversibly removes the rule, its alerts, and its evaluation history. Maintenance records linked to its alerts must be removed first.`
+      )
+    ) {
+      return;
+    }
+
+    permanentDeleteRequest.current = true;
+    setDeletingRuleId(rule.id);
+    setLoadError("");
+    setActionNotice("");
+    try {
+      await api.del(`/rules/${rule.id}/permanent`);
+      await refreshAll();
+      setActionNotice(`Rule “${rule.name}” was permanently deleted.`);
+    } catch (error) {
+      setLoadError(error.message || "Could not permanently delete the rule.");
+    } finally {
+      permanentDeleteRequest.current = false;
+      setDeletingRuleId(null);
+    }
+  };
+
   const addRule = async (values) => {
     if (!availableVariables.length) {
       throw new Error(
@@ -676,15 +698,44 @@ const filteredLogs = [...logs]
   };
 
   const bulk = async (state) => {
+    if (bulkRequest.current || bulkSaving) return;
+    const affected = rules.filter((rule) =>
+      state === "activated" ? !isAct(rule) : isAct(rule)
+    ).length;
+    if (state === "not_activated" && affected > 0) {
+      const scope = children
+        ? "this asset and its included child assets"
+        : "this asset only";
+      if (!window.confirm(
+        `Deactivate ${affected} active rule(s) on ${scope}? Active alerts for those rules will be resolved.`
+      )) {
+        return;
+      }
+    }
+    bulkRequest.current = true;
+    setBulkSaving(true);
+    setLoadError("");
+    setActionNotice("");
+    setMenu(false);
     try {
-      await api.post(`/assets/${assetId}/rules/bulk`, {
-        state,
-      });
-
-      setMenu(false);
+      const result = await api.post(
+        `/assets/${assetId}/rules/bulk?include_children=${children}`,
+        { state }
+      );
       await refreshAll();
+      const action = state === "activated" ? "activated" : "deactivated";
+      const skipped = result.skipped || [];
+      setActionNotice(
+        `${result.updated} rule(s) ${action}.` +
+          (skipped.length
+            ? ` ${skipped.length} rule(s) were skipped because they are not eligible: ${skipped.map((item) => item.name).join(", ")}.`
+            : "")
+      );
     } catch (error) {
-      setLoadError(error.message);
+      setLoadError(error.message || "Could not update rule states.");
+    } finally {
+      bulkRequest.current = false;
+      setBulkSaving(false);
     }
   };
 
@@ -759,6 +810,23 @@ const filteredLogs = [...logs]
           >
             Dismiss and retry
           </button>
+        </div>
+      )}
+      {actionNotice && (
+        <div className="banner success" role="status">
+          <p>{actionNotice}</p>
+          <button
+            type="button"
+            className="btn-outline"
+            onClick={() => setActionNotice("")}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+      {bulkSaving && (
+        <div className="banner" role="status" aria-live="polite">
+          <p>Updating rule states and resolving alerts where required…</p>
         </div>
       )}
 
@@ -1143,31 +1211,39 @@ const filteredLogs = [...logs]
               </button>
                 {menu && (
                   <div className="menu right" role="menu">
-                    <div
-                    role="menuitem"
-                    onClick={() => bulk("activated")}
-                    >
-                      Activate all rules
-                      </div>
-                      <div
+                      <button
+                      type="button"
+                      disabled={bulkSaving}
                       role="menuitem"
-                      onClick={() => bulk("not_activated")}
-                      >Deactivate all rules</div>
-                      <div
+                      onClick={() => bulk("activated")}
+                      >
+                        {bulkSaving ? "Updating rules…" : "Activate all rules"}
+                      </button>
+                        <button
+                        type="button"
+                        disabled={bulkSaving}
+                      role="menuitem"
+                        onClick={() => bulk("not_activated")}
+                        >Deactivate all rules</button>
+                        <button
+                        type="button"
+                        disabled={bulkSaving}
                       role="menuitem"
                       onClick={() => {
                         setMenu(false);
-                        setShowPredefinedRules(true);
-                      }}>Assign predefined monitoring rules</div>
-                      <div
-                      role="menuitem"
-                      onClick={() => {
-                        setMenu(false);
-                        setModal("copyRules");
-                      }}
-                      >Copy from another asset</div>
-                      </div>
-                    )}
+                          setShowPredefinedRules(true);
+                        }}>Assign predefined monitoring rules</button>
+                        <button
+                        type="button"
+                        disabled={bulkSaving}
+                        role="menuitem"
+                        onClick={() => {
+                          setMenu(false);
+                          setModal("copyRules");
+                        }}
+                        >Copy from another asset</button>
+                        </div>
+                      )}
                     </div>
                     </div>
 
@@ -1242,6 +1318,7 @@ const filteredLogs = [...logs]
                         onClick={() =>
                           setState(rule, "not_activated")
                         }
+                        disabled={deletingRuleId !== null}
                       >
                         Deactivate
                       </button>
@@ -1251,19 +1328,33 @@ const filteredLogs = [...logs]
                         onClick={() =>
                           setState(rule, "activated")
                         }
+                        disabled={deletingRuleId !== null}
                       >
                         Activate
                       </button>
                     )}
 
                     {!isAct(rule) && (
-                      <button
-                        className="btn-danger"
-                        onClick={() => remove(rule)}
-                        title="Remove from the rule list while preserving its alert and evaluation history"
-                      >
-                        Archive
-                      </button>
+                      <>
+                        <button
+                          className="btn-danger"
+                          onClick={() => remove(rule)}
+                          title="Remove from the rule list while preserving its alert and evaluation history"
+                          disabled={deletingRuleId !== null}
+                        >
+                          Archive
+                        </button>
+                        <button
+                          className="btn-danger"
+                          onClick={() => permanentlyDeleteRule(rule)}
+                          title="Permanently delete this rule, alerts, and evaluation history"
+                          disabled={deletingRuleId !== null}
+                        >
+                          {deletingRuleId === rule.id
+                            ? "Deleting…"
+                            : "Delete permanently"}
+                        </button>
+                      </>
                     )}
                   </div>
                 );
@@ -1274,165 +1365,55 @@ const filteredLogs = [...logs]
       )}
 
       {tab === "logbook" && (
-        <div className="panel">
-          <div className="panel-head">
-            <span className="muted">
-              {logs.length}{" "}
-              {logs.length === 1 ? "entry" : "entries"}
-            </span>
-
-            <button
-              className="btn-primary"
-              onClick={() => setModal("log")}
-            >
-              <PlusCircle size={17} /> Add entry
-            </button>
-          </div>
-
-                    <div className="maintenance-logbook__toolbar">
-            <button
-              type="button"
-              onClick={() => setShowLogFilter((value) => !value)}
-            >
-              Filter
-            </button>
-
-            <input
-              type="search"
-              placeholder="Search"
-              value={logSearch}
-              onChange={(event) => setLogSearch(event.target.value)}
-            />
-
-            <label>
-              Sort:
-              <select
-                value={logSort}
-                onChange={(event) => setLogSort(event.target.value)}
-              >
-                <option value="newest">Creation date: Newest → Oldest</option>
-                <option value="oldest">Creation date: Oldest → Newest</option>
-              </select>
-            </label>
-
-            <button type="button" onClick={() => setModal("log")}>
-              Unplanned maintenance
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                const headers = ["Date", "Maintenance Type", "Details"];
-                const rows = filteredLogs.map((entry) => [
-                  entry.time || entry.created_at || "",
-                  entry.maintenance_type || "unknown",
-                  entry.text || "",
-                ]);
-
-                const csvCell = (value) =>
-                  `"${String(value).replace(/"/g, '""')}"`;
-
-                const csv = [headers, ...rows]
-                  .map((row) => row.map(csvCell).join(","))
-                  .join("\r\n");
-
-                const blob = new Blob(["\uFEFF" + csv], {
-                  type: "text/csv;charset=utf-8;",
-                });
-
-                const url = URL.createObjectURL(blob);
-                const link = document.createElement("a");
-                link.href = url;
-                link.download = "maintenance-logbook.csv";
-                link.click();
-                URL.revokeObjectURL(url);
-              }}
-            >
-              Export
-            </button>
-          </div>
-
-          {showLogFilter && (
-            <div className="maintenance-logbook__filters">
-              <label>
-                Maintenance type
-                <select
-                  value={logTypeFilter}
-                  onChange={(event) => setLogTypeFilter(event.target.value)}
-                >
-                  <option value="all">All types</option>
-                  <option value="planned">Planned maintenance</option>
-                  <option value="unplanned">Unplanned maintenance</option>
-                  <option value="unknown">Unknown</option>
-                </select>
-              </label>
-
-              <label>
-                From
-                <input
-                  type="date"
-                  value={logStartDate}
-                  onChange={(event) => setLogStartDate(event.target.value)}
-                />
-              </label>
-
-              <label>
-                To
-                <input
-                  type="date"
-                  value={logEndDate}
-                  onChange={(event) => setLogEndDate(event.target.value)}
-                />
-              </label>
-
+        <>
+          <MaintenancePanel assetId={assetId} onChanged={refreshStatus} />
+          <div className="panel">
+            <div className="panel-head">
+              <div>
+                <h2>Maintenance log notes</h2>
+                <span className="muted">
+                  {logs.length} {logs.length === 1 ? "entry" : "entries"}
+                </span>
+              </div>
               <button
-                type="button"
-                onClick={() => {
-                  setLogTypeFilter("all");
-                  setLogStartDate("");
-                  setLogEndDate("");
-                  setLogSearch("");
-                }}
+                className="btn-primary"
+                onClick={() => setModal("log")}
               >
-                Clear filters
+                <PlusCircle size={17} /> Add note
               </button>
             </div>
-          )}
 
-          {filteredLogs.length === 0 ? (
-            <EmptyState
-              art={false}
-              title="No matching logbook entries"
-              lines={[
-                logs.length === 0
-                  ? "Record inspections, repairs and observations here."
-                  : "Try changing your search or filters.",
-              ]}
-            />
-          ) : (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th className="col-time">Time</th>
-                  <th>Maintenance Type</th>
-                  <th>Entry</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {filteredLogs.map((entry) => (
-                  <tr key={entry.id}>
-                    <td className="col-time">
-                      {formatTime(entry.time || entry.created_at)}
-                    </td>
-                    <td>{entry.maintenance_type || "unknown"}</td>
-                    <td>{entry.text}</td>
+            {logs.length === 0 ? (
+              <EmptyState
+                art={false}
+                title="No logbook notes"
+                lines={[
+                  "Record brief observations separately from maintenance jobs.",
+                ]}
+              />
+            ) : (
+              <table className="table">
+                <thead>
+                  <tr>
+                    <th className="col-time">Time</th>
+                    <th>Entry</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+                </thead>
+
+                <tbody>
+                  {logs.map((entry) => (
+                    <tr key={entry.id}>
+                      <td className="col-time">
+                        {formatTime(entry.time)}
+                      </td>
+                      <td>{entry.text}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </>
       )}
 
       {tab === "events" && (
@@ -1480,8 +1461,7 @@ const filteredLogs = [...logs]
     onClose={() => setModal(null)}
   >
     <div className="rule-type-options">
-      {/* Interval-based rule */}
-      <button
+    <button
         type="button"
         className="rule-type-option"
         onClick={() =>
@@ -1489,10 +1469,9 @@ const filteredLogs = [...logs]
         }
       >
         <strong>Interval-based</strong>
-        <small>Create a rule based on intervals</small>
+        <small>Create a recurring maintenance schedule with due dates</small>
       </button>
 
-      {/* Usage-based rule */}
       <button
         type="button"
         className="rule-type-option"
@@ -1501,10 +1480,9 @@ const filteredLogs = [...logs]
         }
       >
         <strong>Usage-based</strong>
-        <small>Create a rule based on machine usage</small>
+        <small>Alert when a numeric usage metric reaches a threshold</small>
       </button>
 
-      {/* Time-based rule */}
       <button
         type="button"
         className="rule-type-option"
@@ -1513,7 +1491,7 @@ const filteredLogs = [...logs]
         }
       >
         <strong>Time-based</strong>
-        <small>Create a rule with current time and end time</small>
+        <small>Schedule a maintenance job for a start and end date/time</small>
       </button>
     </div>
   </Modal>
@@ -1524,10 +1502,18 @@ const filteredLogs = [...logs]
 {modal === "copyRules" && (
   <CopyRulesModal
     assetId={assetId}
+    assets={assets}
+    cycleVariableIds={cycleVariableIds}
     onClose={() => setModal(null)}
-    onCopied={async () => {
+    onCopied={async (result) => {
       setModal(null);
       await refreshAll();
+      setActionNotice(
+        `${result.created.length} rule(s) copied to this asset and created inactive.` +
+          (result.already_copied?.length
+            ? ` ${result.already_copied.length} matching rule(s) were already present.`
+            : "")
+      );
     }}
   />
 )}
@@ -1545,62 +1531,6 @@ const filteredLogs = [...logs]
           fields={ruleFormFields}
           onSubmit={addRule}
           onClose={() => setModal(null)}
-        />
-      )}
-
-      {modal === "addUsage" && (
-        <CreateModal
-          title="Create usage-based rule"
-          submitLabel="Create rule"
-          fields={[
-            { key: "name", label: "Rule name", required: true, placeholder: "e.g. Monthly usage limit" },
-            { key: "description", label: "Description", type: "textarea", placeholder: "What usage should this rule monitor?" },
-            { key: "usage_limit", label: "Usage limit", type: "number", required: true, placeholder: "Enter usage limit" },
-            { key: "severity", label: "Severity", type: "select", default: "warning", options: [["warning", "Warning"], ["alert", "Alert"]] },
-          ]}
-          onSubmit={async (values) => {
-            const limit = Number(values.usage_limit);
-            if (!values.name?.trim()) throw new Error("Please enter a rule name.");
-            if (!Number.isFinite(limit) || limit <= 0) throw new Error("Enter a valid positive usage limit.");
-            await api.post(`/assets/${assetId}/rules/usage`, {
-              name: values.name.trim(),
-              description: values.description?.trim() || null,
-              usage_limit: limit,
-              severity: values.severity,
-            });
-            setModal(null);
-            setList("activated");
-            await refreshAll();
-          }}
-          onClose={() => setModal("ruleTypeOptions")}
-        />
-      )}
-
-      {modal === "addTime" && (
-        <CreateModal
-          title="Create time-based rule"
-          submitLabel="Create rule"
-          fields={TIME_RULE_FIELDS()}
-          onSubmit={async (values) => {
-            if (!values.name?.trim()) throw new Error("Please enter a rule name.");
-            if (!values.current_time || !values.end_time) {
-              throw new Error("Please select both current time and end time.");
-            }
-            if (values.current_time === values.end_time) {
-              throw new Error("Current time and end time cannot be the same.");
-            }
-            await api.post(`/assets/${assetId}/rules/time`, {
-              name: values.name.trim(),
-              description: values.description?.trim() || null,
-              current_time: values.current_time,
-              end_time: values.end_time,
-              severity: values.severity,
-            });
-            setModal(null);
-            setList("activated");
-            await refreshAll();
-          }}
-          onClose={() => setModal("ruleTypeOptions")}
         />
       )}
 
@@ -1720,10 +1650,16 @@ const filteredLogs = [...logs]
         <PredefinedRulesModal
           assetId={assetId}
           onClose={() => setShowPredefinedRules(false)}
-          onAssigned={async () => {
+          onAssigned={async (result) => {
             setShowPredefinedRules(false);
             setList("not_activated");
             await refreshAll();
+            const assigned = result.created?.length || 0;
+            const existing = result.already_assigned?.length || 0;
+            setActionNotice(
+              `${assigned} predefined rule(s) assigned and created inactive.` +
+                (existing ? ` ${existing} rule(s) were already assigned.` : "")
+            );
           }}
         />
       )}

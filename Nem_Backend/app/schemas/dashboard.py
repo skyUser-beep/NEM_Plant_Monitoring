@@ -1,8 +1,6 @@
 from datetime import datetime
-
 from app.schemas.common import ORMModel
-
-
+# specify exactly what summary information the backend should return to the frontend dashboard
 class DashboardSummary(ORMModel):
     total_assets: int
     active_assets: int

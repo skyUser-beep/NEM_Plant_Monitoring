@@ -2,8 +2,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from pydantic import ValidationError
+from sqlalchemy import create_engine, inspect, text
 
 from app.core.config import Settings
+from app.db.init_db import initialize_database
 from app.db.session import UTCDateTime, create_database_engine
 from app.models import (
     Alert,
@@ -109,3 +111,104 @@ def test_nem_models_use_separate_tables_and_foreign_keys():
     assert next(
         iter(MaintenanceRecord.__table__.c.alert_id.foreign_keys)
     ).target_fullname == "nem_alerts.id"
+
+
+def test_maintenance_schema_upgrade_preserves_legacy_records():
+    engine = create_engine("sqlite://")
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "CREATE TABLE nem_maintenance_records ("
+                    "id INTEGER PRIMARY KEY, "
+                    "asset_id INTEGER NOT NULL, "
+                    "alert_id INTEGER, "
+                    "summary VARCHAR(200) NOT NULL, "
+                    "notes TEXT, "
+                    "performed_by VARCHAR(200) NOT NULL, "
+                    "performed_at TIMESTAMP NOT NULL, "
+                    "next_due_at TIMESTAMP, "
+                    "created_at TIMESTAMP NOT NULL)"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO nem_maintenance_records "
+                    "(id, asset_id, summary, performed_by, performed_at, created_at) "
+                    "VALUES (1, 7, 'Legacy inspection', 'Operator', "
+                    "'2026-10-16 09:12:00', '2026-10-16 09:12:00')"
+                )
+            )
+
+        initialize_database(engine)
+        initialize_database(engine)
+
+        with engine.connect() as connection:
+            maintenance_columns = {
+                column["name"]
+                for column in inspect(engine).get_columns("nem_maintenance_records")
+            }
+            assert "schedule_id" in maintenance_columns
+            assert "planned_due_date" in maintenance_columns
+            assert "nem_maintenance_schedules" in inspect(engine).get_table_names()
+            alert_columns = {
+                column["name"]: column
+                for column in inspect(engine).get_columns("nem_alerts")
+            }
+            assert alert_columns["rule_id"]["nullable"] is True
+            assert "maintenance_schedule_id" in alert_columns
+            assert "maintenance_due_date" in alert_columns
+            legacy = connection.execute(
+                text(
+                    "SELECT summary, status, maintenance_type, priority, "
+                    "performed_at, actual_completed_at "
+                    "FROM nem_maintenance_records WHERE id = 1"
+                )
+            ).one()
+            assert legacy.summary == "Legacy inspection"
+            assert legacy.status == "completed"
+            assert legacy.maintenance_type == "inspection"
+            assert legacy.priority == "medium"
+            assert legacy.performed_at == "2026-10-16 09:12:00"
+            assert legacy.actual_completed_at == legacy.performed_at
+    finally:
+        engine.dispose()
+
+
+def test_schedule_period_start_column_upgrade_backfills_and_is_idempotent():
+    engine = create_engine("sqlite://")
+    legacy_start = "2026-10-19"
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "CREATE TABLE nem_maintenance_schedules ("
+                    "id INTEGER PRIMARY KEY, schedule_start_date DATE NOT NULL)"
+                )
+            )
+            connection.execute(
+                text(
+                    "INSERT INTO nem_maintenance_schedules "
+                    "(id, schedule_start_date) VALUES (1, :start_date)"
+                ),
+                {"start_date": legacy_start},
+            )
+
+        initialize_database(engine)
+        initialize_database(engine)
+
+        columns = {
+            column["name"]
+            for column in inspect(engine).get_columns("nem_maintenance_schedules")
+        }
+        assert "current_period_start_date" in columns
+        with engine.connect() as connection:
+            stored_start = connection.scalar(
+                text(
+                    "SELECT current_period_start_date "
+                    "FROM nem_maintenance_schedules WHERE id = 1"
+                )
+            )
+        assert str(stored_start) == legacy_start
+    finally:
+        engine.dispose()

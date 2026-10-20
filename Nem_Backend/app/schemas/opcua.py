@@ -1,11 +1,10 @@
+#Pydantic schemas for OPC UA requests,responses, and machine signal mappings
 from typing import Any
-
 from pydantic import Field, field_validator, model_validator
-
 from app.schemas.common import ORMModel
 from app.schemas.reading import ReadingRead
 
-
+#Request to read a PLC tag
 class OpcUaReadRequest(ORMModel):
     node_id: str = Field(min_length=1, max_length=512)
     asset_id: int = Field(gt=0)
@@ -19,14 +18,13 @@ class OpcUaReadRequest(ORMModel):
         if not value:
             raise ValueError("NodeId cannot be empty")
         return value
-
-
+#Result of a read
 class OpcUaReadResponse(ORMModel):
     node_id: str
     value: Any
     reading: ReadingRead
 
-
+#Connect a plc tag to a db variables
 class OpcUaTagMapping(ORMModel):
     node_id: str = Field(min_length=1, max_length=512)
     variable_id: int = Field(gt=0)
@@ -39,7 +37,7 @@ class OpcUaTagMapping(ORMModel):
             raise ValueError("NodeId cannot be empty")
         return value
 
-
+#Configure the signals for one machine
 class OpcUaMachineMapping(ORMModel):
     asset_id: int = Field(gt=0)
     cycle_signal: OpcUaTagMapping | None = None
@@ -65,3 +63,5 @@ class OpcUaMachineMapping(ORMModel):
         if self.runtime_limit_seconds is not None and self.running_signal is None:
             raise ValueError("A runtime limit requires a running signal")
         return self
+
+#

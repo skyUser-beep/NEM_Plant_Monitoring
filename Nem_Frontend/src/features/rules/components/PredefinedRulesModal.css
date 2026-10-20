@@ -62,6 +62,15 @@
   padding: 10px 12px;
 }
 
+.prm-tools select {
+  min-height: 39px;
+  padding: 8px 10px;
+  background: var(--input, #ffffff);
+  color: var(--text, #1f2937);
+  border: 1px solid var(--border, #d1d5db);
+  border-radius: 5px;
+}
+
 .prm-tools span,
 .prm-note {
   font-size: 12px;
@@ -81,6 +90,15 @@
   padding: 16px 6px;
   border-bottom: 1px solid var(--border, #2b3542);
   cursor: pointer;
+}
+
+.prm-rule-disabled {
+  opacity: 0.72;
+  cursor: not-allowed;
+}
+
+.prm-unavailable {
+  color: #d97936 !important;
 }
 
 .prm-rule input {
@@ -123,6 +141,17 @@
   border-radius: 6px;
   color: #ffb5bb;
   background: #5a1f292b;
+}
+
+.prm-confirmation {
+  margin: 12px 22px 0;
+  padding: 11px 13px;
+  border: 1px solid #c7d7ef;
+  border-radius: 6px;
+  color: var(--text, #1f2937);
+  background: var(--input, #f8fafc);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 .prm-footer {

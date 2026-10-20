@@ -1,5 +1,8 @@
 # NEM Plant Monitoring
 
+For a code-based walkthrough of the current runtime, data flow, live refresh
+behavior, and implementation limitations, see [CURRENT_SYSTEM_GUIDE.md](./CURRENT_SYSTEM_GUIDE.md).
+
 FastAPI + PostgreSQL backend and React dashboard for monitoring industrial
 assets. Readings arrive from the REST API or from a **read-only** OPC UA
 subscription to a Siemens S7-1200 PLC. The backend counts machine cycles,
@@ -37,8 +40,10 @@ UTC type, startup initialization).
    while the machine runs and `false` when stopped. A momentary cycle pulse
    cannot measure running time. Time while the collector is disconnected is not
    inferred.
-5. **Rules** are evaluated when readings arrive, when a cycle is counted, and by
-   a periodic scheduler. Warnings/alerts create deduplicated alert episodes.
+5. **Rules** are evaluated when readings arrive and when a cycle is counted.
+   A manual monitoring-evaluation endpoint is also available. The configured
+   scheduler enablement/interval settings are not currently wired to a periodic
+   evaluator. Warnings/alerts create deduplicated alert episodes.
 6. The dashboard polls the status endpoints and updates React state in place.
 
 Only one backend instance may run the collector for a database; it is guarded
@@ -79,14 +84,18 @@ npm run dev
 PostgreSQL is the only supported database (`psycopg`). The NEM ORM uses
 `assets`, `variables`, `machine_monitoring_states`, and `nem_*` tables
 (`nem_readings`, `nem_monitoring_rules`, `nem_rule_states`, `nem_alerts`,
-`nem_monitoring_events`, `nem_maintenance_records`) plus `scheduler_leases` and
-dashboard configuration tables. Pre-existing PLC-shaped tables
+`nem_monitoring_events`, `nem_maintenance_records`,
+`nem_maintenance_schedules`) plus `scheduler_leases` and dashboard configuration
+tables. Pre-existing PLC-shaped tables
 (`readings`, `monitoring_rules`, `alerts`, and others) are left untouched.
 
-At startup `Base.metadata.create_all()` creates missing tables. A small additive
-step also adds `nem_monitoring_rules.is_archived` (default `false`) to an
-existing table. No other existing tables or columns are modified, and no data is
-deleted.
+At startup `Base.metadata.create_all()` creates missing tables. Additive startup
+updates also add `nem_monitoring_rules.is_archived`, maintenance schedule links,
+the maintenance period-start date (backfilled from each schedule's start date),
+and fields required to use the existing alerts table for due-date alerts. Older
+maintenance rows are retained and treated as completed inspections;
+`actual_completed_at` is backfilled from their legacy `performed_at` value. No
+rows are deleted. Back up production data before deploying schema changes.
 
 ### Timestamp convention
 
@@ -119,11 +128,11 @@ No secrets belong in source control.
 | `DATABASE_URL` | `postgresql+psycopg://user:<URL-encoded-password>@localhost:5432/plc_monitoring`. No fallback. |
 | `TEST_DATABASE_URL` | Dedicated test database, different from the application database. |
 | `CORS_ORIGINS` | Comma-separated browser origins; empty (disabled) by default. |
-| `MONITORING_SCHEDULER_ENABLED` | Periodic evaluation, default `true`. |
-| `MONITORING_EVALUATION_INTERVAL_SECONDS` | Scheduler interval, default `15`. |
+| `MONITORING_SCHEDULER_ENABLED` | Declared configuration setting; periodic evaluation is not currently started by the application. |
+| `MONITORING_EVALUATION_INTERVAL_SECONDS` | Declared scheduler interval setting; no periodic evaluator currently consumes it. |
+| `MAINTENANCE_DUE_ALERTS_ENABLED` | Enables the leased maintenance due-alert evaluator; defaults to `true` and checks once per minute. |
 | `MONITORING_DEFAULT_STALE_AFTER_SECONDS` | Freshness window, default `300`; a rule may override it. |
 | `OPCUA_ENDPOINT` | `opc.tcp://host:port/...` for the PLC. |
-| `OPCUA_CLIENT_CERT`, `OPCUA_CLIENT_KEY`, `OPCUA_SERVER_CERT` | Certificate/key paths (relative to `Nem_Backend/`). Required for secure connections. |
 | `OPCUA_USERNAME`, `OPCUA_PASSWORD` | Optional; set both or neither. |
 | `OPCUA_TIMEOUT_SECONDS` | Connection/read timeout, default `10`. |
 | `OPCUA_RECONNECT_DELAY_SECONDS` | Delay before reconnecting, default `5`. |
@@ -139,9 +148,11 @@ very short pulses are captured.
 
 ## OPC UA machine mappings
 
-The collector uses a secure, read-only client (`Basic256Sha256`,
-`SignAndEncrypt`, pinned server certificate). Do not disable validation or
-downgrade security.
+The collector's subscription and one-shot read paths are read-only. OPC UA
+transport encryption and certificate validation are intentionally disabled for
+development testing. Use this only on a trusted, isolated network; do not use
+this configuration on production or untrusted networks. Add the PLC-approved
+security policy and certificates before deployment.
 
 Mappings live in `OPCUA_MACHINE_MAPPINGS`; they are not created from the UI.
 There is at most one entry per asset, and a NodeId may be mapped only once
@@ -189,7 +200,7 @@ delete it or change the owner). Do not force-take a lease from a live owner.
 - **Assets â†’ asset page:** machine strip (status, cycles, running time, last
   signal, OPC UA connection, mapped cycle signal), *Live values* with the latest
   reading per variable, rule list, logbook, and Event log.
-- **PLC / OPC UA:** secure connection test, one-shot read,
+- **PLC / OPC UA:** connection test, one-shot read,
   mapping and publishing-interval details, and live machine cards.
 - **Configuration / Settings:** rules, collections, documents, import, profile,
   SMTP, usage, and backup/restore.
@@ -251,7 +262,8 @@ deactivate.
 atomic), `GET /readings/variables/{id}/latest`, `GET /readings/assets/{id}/latest`,
 `GET /readings/variables/{id}` (time filters, pagination). Values must match the
 variable type, the variable must belong to the asset, and readings more than five
-minutes in the future are rejected. Request bodies are limited to 1 MiB.
+minutes in the future are rejected. Request bodies with a declared
+`Content-Length` greater than 25 MiB are rejected.
 
 **Rules and monitoring:** `POST/GET /api/v1/rules`, `GET/PATCH /rules/{id}`,
 `GET /rules/{id}/status`, `POST /monitoring/evaluate`, `GET /monitoring/status`,
@@ -266,7 +278,23 @@ future-dated, or invalid input is `unknown`, never normal.
 rules. Acknowledgement does not resolve the condition. No email or other
 outbound notification is sent.
 
-**Maintenance:** `POST/GET /api/v1/maintenance`, `GET /maintenance/{id}`.
+**Maintenance:** `POST /api/v1/maintenance`, `GET /api/v1/maintenance`,
+`GET/PATCH/DELETE /api/v1/maintenance/{id}`, and
+`POST /api/v1/maintenance/{id}/start`, `/complete`, or `/cancel`. Asset Detail
+includes maintenance history, create and edit forms, status actions, planned
+and actual dates, and summary counts. Completed occurrences are read-only;
+DELETE archives them in a separate log without deleting their history.
+Cancelling retains the record. Planned
+work uses calendar dates only; running-hour and cycle-based maintenance
+scheduling is not implemented. Schedules use `POST/GET
+/api/v1/maintenance/schedules`, `GET/PATCH
+/api/v1/maintenance/schedules/{schedule_id}`, and the
+`/confirm-next` and `/decline-next` actions. Due-date alerts are active warning
+rows in the existing `nem_alerts` table and are evaluated by a leased backend
+task; they are resolved when the occurrence is completed. Schedule progress is
+shown as elapsed/total calendar days, inclusive of the current period's start
+and due dates. Deleting completed maintenance archives it from the active list
+without deleting the history; the archived log and an audit event retain it.
 
 **Dashboard summary:** `GET /api/v1/dashboard/summary` (asset counts, rule state
 counts, active and unacknowledged alerts, latest reading time; archived and

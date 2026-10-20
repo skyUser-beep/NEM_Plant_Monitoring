@@ -31,7 +31,6 @@ import traceback
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/plc", tags=["PLC / OPC UA"])
-
 #Checking monitoring status
 @router.get("/status")
 def plc_monitoring_status(request: Request,session: Session = Depends(get_db),) -> dict[str, object]:
@@ -115,13 +114,10 @@ async def start_opcua_discovery(
 
                     if key in visited:
                         continue
-
                     visited.add(key)
                     visited_nodes += 1
-
                     try:
                         node_class = await node.read_node_class()
-
                         if node_class in (
                             ua.NodeClass.Object,
                             ua.NodeClass.View,

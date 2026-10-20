@@ -118,6 +118,21 @@
   color: #e2e8f0;
 }
 
+.rule-create-page .rule-checkbox-field {
+  grid-column: 1 / -1;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.rule-create-page .rule-checkbox-field input {
+  width: 18px;
+  min-height: 18px;
+  margin: 0;
+  accent-color: #3b82f6;
+}
+
 .rule-create-page .form-group label {
   display: block;
   margin: 0;

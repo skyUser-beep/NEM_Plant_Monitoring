@@ -3,7 +3,7 @@ from datetime import datetime, timezone # work with timestamps and UTC
 # Groups API Endpoints
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 #func -> SQL Function, or_ -> Combines SQL Condition using OR, select -> constructs SQL queries
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, func, or_, select
 #Represents the SQLAlchemy database session
 from sqlalchemy.orm import Session
 
@@ -177,14 +177,19 @@ def alert_query(
     if lifecycle_status is not None:
         filters.append(Alert.status == lifecycle_status)
         if lifecycle_status == "active":
-            query = query.join(MonitoringRule, MonitoringRule.id == Alert.rule_id)
-            count_query = count_query.join(
+            query = query.outerjoin(MonitoringRule, MonitoringRule.id == Alert.rule_id)
+            count_query = count_query.outerjoin(
                 MonitoringRule, MonitoringRule.id == Alert.rule_id
             )
             filters.extend(
                 [
-                    MonitoringRule.is_enabled.is_(True),
-                    MonitoringRule.is_archived.is_(False),
+                    or_(
+                        Alert.maintenance_schedule_id.is_not(None),
+                        and_(
+                            MonitoringRule.is_enabled.is_(True),
+                            MonitoringRule.is_archived.is_(False),
+                        ),
+                    ),
                 ]
             )
     if acknowledged is True:

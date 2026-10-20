@@ -1,3 +1,5 @@
+# component that continuously receives PLC updates,saves readings to the db 
+# OPC UA server -> subscription handler -> OPC UA collector -> PostgreSQL and monitoring engine
 import asyncio
 import json
 import logging
@@ -10,13 +12,11 @@ from typing import Any
 
 from fastapi import HTTPException
 from pydantic import ValidationError # type: ignore
-from sqlalchemy import select, update # type: ignore
+from sqlalchemy import and_, or_, select, update # type: ignore
 from sqlalchemy.orm import Session, sessionmaker # type: ignore
 
 from app.core.config import Settings
-from app.models import (
-    Alert,
-    Asset,
+from app.models import (Alert,Asset,
     MachineMonitoringState,
     MonitoringRule,
     SchedulerLease,
@@ -24,14 +24,10 @@ from app.models import (
 )
 from app.schemas.opcua import OpcUaMachineMapping
 from app.schemas.reading import ReadingCreate
-from app.services.monitoring_engine import (
-    acquire_scheduler_lease,
-    emit_event,
-    evaluate_reading_rules,
-    utc_now,
+from app.services.monitoring_engine import (acquire_scheduler_lease,
+    emit_event,evaluate_reading_rules,utc_now,
 )
-from app.services.opcua_client import (
-    OpcUaConfigurationError,
+from app.services.opcua_client import (OpcUaConfigurationError,
     create_configured_opcua_client,
 )
 from app.services.reading_ingestion import ingest_reading
@@ -41,14 +37,14 @@ LEASE_NAME = "opcua-subscription-collector"
 LEASE_SECONDS = 30
 MAX_LEASE_SECONDS = 15 * 60
 
-
+#The message received from the PLC
 @dataclass(frozen=True)
 class OpcUaNotification:
     node_id: str
     value: object
     recorded_at: datetime | None
 
-
+#making timestamps consistent
 def _normalize_notification_timestamp(
     recorded_at: datetime | None,
     node_id: str,
@@ -69,7 +65,7 @@ def _normalize_notification_timestamp(
         return recorded_at.replace(tzinfo=timezone.utc)
     return recorded_at.astimezone(timezone.utc)
 
-
+#reading the PLC configuration
 def load_machine_mappings(raw: str) -> list[OpcUaMachineMapping]:
     if not raw.strip():
         return []
@@ -106,7 +102,7 @@ def load_machine_mappings(raw: str) -> list[OpcUaMachineMapping]:
             node_ids.add(signal.node_id)
     return mappings
 
-
+#calculating machine running time
 def advance_runtime(state: MachineMonitoringState, at: datetime) -> None:
     checkpoint = state.runtime_checkpoint_at
     if state.is_running is True and checkpoint is not None and at <= checkpoint:
@@ -119,10 +115,9 @@ def advance_runtime(state: MachineMonitoringState, at: datetime) -> None:
     state.updated_at = at
 
 
-
+#Receiving PLC updates
 class _SubscriptionHandler:
-    def __init__(
-        self,
+    def __init__(self,
         loop: asyncio.AbstractEventLoop,
         queue: asyncio.Queue[OpcUaNotification | None],
         max_queue_size: int,
@@ -130,7 +125,7 @@ class _SubscriptionHandler:
         self._loop = loop
         self._queue = queue
         self._max_queue_size = max_queue_size
-
+# how the notification callback works
     def datachange_notification(
         self,
         node: Any,
@@ -145,17 +140,14 @@ class _SubscriptionHandler:
 
         status = getattr(data_value, "StatusCode", None)
         if status is None or not status.is_good():
-            LOGGER.warning(
-                "Ignoring OPC UA notification with bad or missing quality"
-            )
+            LOGGER.warning("Ignoring OPC UA notification with bad or missing quality")
             return
 
         node_id = node.nodeid.to_string()
         source_timestamp = getattr(data_value, "SourceTimestamp", None)
         server_timestamp = getattr(data_value, "ServerTimestamp", None)
 
-        LOGGER.warning(
-            "OPC UA RAW: node=%s value=%r quality=%s source=%r server=%r",
+        LOGGER.warning("OPC UA RAW: node=%s value=%r quality=%s source=%r server=%r",
             node_id,
             value,
             status,
@@ -163,8 +155,7 @@ class _SubscriptionHandler:
             server_timestamp,
         )
 
-        notification = OpcUaNotification(
-            node_id=node_id,
+        notification = OpcUaNotification(node_id=node_id,
             value=value,
             recorded_at=source_timestamp or server_timestamp,
         )
@@ -180,11 +171,9 @@ class _SubscriptionHandler:
         self._loop.call_soon_threadsafe(enqueue)
 
     def status_change_notification(self, status: Any) -> None:
-        LOGGER.warning(
-            "OPC UA subscription status changed (%s)",
-            type(status).__name__,
-        )
+        LOGGER.warning("OPC UA subscription status changed (%s)",type(status).__name__,)
 
+#preparing the collector
 class OpcUaCollector:
     def __init__(self, settings: Settings, session_factory: sessionmaker[Session]) -> None:
         self.settings = settings
@@ -226,7 +215,7 @@ class OpcUaCollector:
                     "reading",
                     signal.variable_id,
                 )
-
+#Checking mapping information for display
     def configured_mapping_rows(self, session: Session) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         for mapping in self.mappings:
@@ -271,7 +260,7 @@ class OpcUaCollector:
                     }
                 )
         return rows
-
+#starting and stopping the collector
     def start(self) -> None:
         if not self.mappings:
             return
@@ -435,15 +424,13 @@ class OpcUaCollector:
                 await asyncio.to_thread(self._disconnect_runtime, utc_now())
                 self._queue = None
                 self.status["connected"] = False
-
+#ensuring configuration matches the database
     def _validate_mappings(self) -> None:
         with self.session_factory() as session:
             for mapping in self.mappings:
                 asset = session.get(Asset, mapping.asset_id)
                 if asset is None or not asset.is_active:
-                    raise OpcUaConfigurationError(
-                        f"OPC UA mapping references missing or inactive asset {mapping.asset_id}."
-                    )
+                    raise OpcUaConfigurationError(f"OPC UA mapping references missing or inactive asset {mapping.asset_id}.")
                 signals = [
                     (mapping.cycle_signal, True),
                     (mapping.running_signal, True),
@@ -459,11 +446,10 @@ class OpcUaCollector:
                         or not variable.is_active
                         or (is_state_signal and variable.data_type != "boolean")
                     ):
-                        raise OpcUaConfigurationError(
-                            "OPC UA NodeIds must map to active variables belonging to "
+                        raise OpcUaConfigurationError("OPC UA NodeIds must map to active variables belonging to "
                             "their configured asset; cycle and running signals must be boolean."
                         )
-
+#From plc updates to database
     def _process_notification(self, notification: OpcUaNotification) -> None:
         mapped = self._node_mappings.get(notification.node_id)
         if mapped is None:
@@ -471,17 +457,10 @@ class OpcUaCollector:
             return
         mapping, role, variable_id = mapped
         if role in {"cycle", "running"} and not isinstance(notification.value, bool):
-            LOGGER.warning(
-                "Ignoring non-boolean OPC UA %s signal for asset %s",
-                role,
-                mapping.asset_id,
-            )
+            LOGGER.warning("Ignoring non-boolean OPC UA %s signal for asset %s",role,mapping.asset_id,)
             return
 
-        recorded_at = _normalize_notification_timestamp(
-            notification.recorded_at,
-            notification.node_id,
-        )
+        recorded_at = _normalize_notification_timestamp(notification.recorded_at,notification.node_id,)
 
         try:
             payload = ReadingCreate(
@@ -490,12 +469,7 @@ class OpcUaCollector:
                 value=notification.value,
                 recorded_at=recorded_at,
                 source_id="opcua_subscription",
-                metadata={
-                    "protocol": "opc.tcp",
-                    "node_id": notification.node_id,
-                    "signal": role,
-                },
-            )
+                metadata={"protocol": "opc.tcp","node_id": notification.node_id,"signal": role,},)
             with self.session_factory() as session:
                 state = session.get(MachineMonitoringState, mapping.asset_id)
                 if state is None:
@@ -525,7 +499,6 @@ class OpcUaCollector:
                         signal_at.isoformat(),
                     )
                     return
-
                 ingest_reading(
                     session,
                     payload,
@@ -534,9 +507,7 @@ class OpcUaCollector:
                 )
                 state.cycle_limit = mapping.cycle_limit
                 state.runtime_limit_seconds = mapping.runtime_limit_seconds
-                state.last_seen_at = max(
-                    state.last_seen_at or recorded_at, recorded_at
-                )
+                state.last_seen_at = max(state.last_seen_at or recorded_at, recorded_at)
                 state.updated_at = recorded_at
 
                 if role == "cycle":
@@ -544,8 +515,7 @@ class OpcUaCollector:
                     state.last_cycle_signal_at = recorded_at
                     self._apply_cycle_signal(session, state, notification.value, recorded_at)
                     if state.cycle_count > previous_cycle_count:
-                        evaluate_reading_rules(
-                            session,
+                        evaluate_reading_rules(session,
                             asset_id=mapping.asset_id,
                             variable_id=variable_id,
                             evaluated_at=recorded_at,
@@ -567,8 +537,7 @@ class OpcUaCollector:
         self.status["last_notification_at"] = recorded_at
 
     @staticmethod
-    def _apply_cycle_signal(
-        session: Session,
+    def _apply_cycle_signal(session: Session,
         state: MachineMonitoringState,
         value: bool,
         at: datetime,
@@ -581,8 +550,7 @@ class OpcUaCollector:
         state.last_cycle_at = at
 
     @staticmethod
-    def _apply_running_signal(
-        session: Session,
+    def _apply_running_signal(session: Session,
         state: MachineMonitoringState,
         value: bool,
         at: datetime,
@@ -655,17 +623,17 @@ class OpcUaCollector:
                 advance_runtime(state, at)
                 state.runtime_checkpoint_at = None
             session.commit()
-
+#lease management - preventing competing collectors
+#attemps to claim ownership
     def _acquire_lease(self) -> bool:
         with self.session_factory() as session:
-            return acquire_scheduler_lease(
-                session,
+            return acquire_scheduler_lease(session,
                 owner_id=self._owner_id,
                 now=utc_now(),
                 lease_seconds=self._lease_seconds(),
                 name=LEASE_NAME,
             )
-
+#calculate the lease duration using the configured timeouts
     def _lease_seconds(self) -> int:
         return min(
             MAX_LEASE_SECONDS,
@@ -678,7 +646,7 @@ class OpcUaCollector:
 
     def _renew_lease(self) -> bool:
         return self._acquire_lease()
-
+# expires the lease when the collector stops or loses its connection
     def _release_lease(self) -> None:
         released_at = utc_now()
         with self.session_factory() as session:
@@ -694,7 +662,7 @@ class OpcUaCollector:
                 )
             )
             session.commit()
-
+#waiting before reconnecting
     async def _wait_before_retry(self) -> None:
         try:
             await asyncio.wait_for(
@@ -704,7 +672,7 @@ class OpcUaCollector:
         except asyncio.TimeoutError:
             pass
 
-
+#preparing machine status for the API
 def machine_status_rows(
     session: Session,
     collector: OpcUaCollector | None,
@@ -733,12 +701,17 @@ def machine_status_rows(
     }
     alerts = session.scalars(
         select(Alert)
-        .join(MonitoringRule, MonitoringRule.id == Alert.rule_id)
+        .outerjoin(MonitoringRule, MonitoringRule.id == Alert.rule_id)
         .where(
             Alert.target_asset_id.in_(asset_ids),
             Alert.status == "active",
-            MonitoringRule.is_enabled.is_(True),
-            MonitoringRule.is_archived.is_(False),
+            or_(
+                Alert.maintenance_schedule_id.is_not(None),
+                and_(
+                    MonitoringRule.is_enabled.is_(True),
+                    MonitoringRule.is_archived.is_(False),
+                ),
+            ),
         )
         .order_by(Alert.started_at.desc(), Alert.id.desc())
     ).all()
@@ -798,3 +771,4 @@ def machine_status_rows(
             }
         )
     return rows
+#this file is the continuous monitoring engine between your plc and db

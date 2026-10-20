@@ -16,6 +16,8 @@ export default function CopyRulesModal({
   const [sourceVariables, setSourceVariables] = useState([]);
   const [destinationVariables, setDestinationVariables] = useState([]);
   const [selected, setSelected] = useState([]);
+  const [includeDisabled, setIncludeDisabled] = useState(true);
+  const [reviewing, setReviewing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -28,6 +30,14 @@ export default function CopyRulesModal({
       ),
     [assets, assetId]
   );
+
+  useEffect(() => {
+    const onKeyDown = (event) => {
+      if (event.key === "Escape" && !saving) onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose, saving]);
 
   useEffect(() => {
     let alive = true;
@@ -61,6 +71,7 @@ export default function CopyRulesModal({
     setSourceVariables([]);
     setSelected([]);
     setResults(null);
+    setReviewing(false);
     setError("");
 
     if (!value) return;
@@ -175,6 +186,12 @@ export default function CopyRulesModal({
         reason: `Unsupported rule type: ${
           rule.rule_type || "unknown"
         }.`,
+      };
+    }
+    if (rule.rule_type === "generic") {
+      return {
+        variable: null,
+        reason: "This rule type has no monitoring evaluator.",
       };
     }
 
@@ -296,6 +313,7 @@ export default function CopyRulesModal({
   );
 
   const toggleRule = (id) => {
+    setReviewing(false);
     setSelected((current) =>
       current.includes(id)
         ? current.filter((item) => item !== id)
@@ -304,82 +322,27 @@ export default function CopyRulesModal({
   };
 
   const copyRules = async () => {
-    if (!selected.length) return;
+    if (!selected.length || saving) return;
 
     setSaving(true);
     setError("");
 
-    const copied = [];
-    const failed = [];
-
     try {
-      for (const id of selected) {
-        const rule = eligibleRules.find(
-          (item) => Number(item.id) === Number(id)
-        );
-
-        if (!rule || rule.copyCheck.reason) {
-          failed.push({
-            name: rule?.name || `Rule ${id}`,
-            reason:
-              rule?.copyCheck.reason ||
-              "Rule is unavailable.",
-          });
-          continue;
-        }
-
-        const payload = {
-          name: rule.name,
-          description: rule.description || null,
-          target_asset_id: Number(assetId),
-          severity: rule.severity,
-          is_enabled: false,
-          rule_type: rule.rule_type,
-          parameters: rule.parameters ?? null,
-          evaluation_interval_seconds:
-            rule.evaluation_interval_seconds ?? null,
-          stale_after_seconds:
-            rule.stale_after_seconds ?? null,
-        };
-
-        if (rule.variable_id != null) {
-          payload.variable_id = Number(
-            rule.copyCheck.variable.id
-          );
-        }
-
-        if (rule.rule_type === "parameter_threshold") {
-          payload.operator = rule.operator;
-          payload.threshold = Number(rule.threshold);
-        }
-
-        try {
-          await api.post(
-            `/assets/${assetId}/rules`,
-            payload
-          );
-
-          copied.push(rule.name);
-        } catch (err) {
-          failed.push({
-            name: rule.name,
-            reason:
-              err.message ||
-              "The backend rejected this rule.",
-          });
-        }
-      }
-
-      setResults({ copied, failed });
+      const result = await api.post(`/assets/${assetId}/rules/copy`, {
+        source_asset_id: Number(sourceId),
+        rule_ids: selected.map(Number),
+        include_disabled: includeDisabled,
+      });
+      setResults({
+        copied: result.created || [],
+        alreadyCopied: result.already_copied || [],
+        excludedDisabled: result.excluded_disabled || 0,
+      });
       setSelected([]);
-
-      if (copied.length) {
-        await onCopied?.();
-      }
+      setReviewing(false);
+      if (result.created?.length) await onCopied?.(result);
     } catch (err) {
-      setError(
-        err.message || "Could not copy the selected rules."
-      );
+      setError(err.message || "Could not copy the selected rules.");
     } finally {
       setSaving(false);
     }
@@ -446,6 +409,10 @@ export default function CopyRulesModal({
             ))}
           </select>
 
+          {!otherAssets.length && (
+            <p className="copy-rules-loading">No other assets are available.</p>
+          )}
+
           {loading && (
   <p className="copy-rules-loading">
     Loading rules and variables...
@@ -454,6 +421,24 @@ export default function CopyRulesModal({
 
           {sourceId && !loading && (
             <>
+              <label className="copy-rules-include-disabled">
+                <input
+                  type="checkbox"
+                  checked={includeDisabled}
+                  disabled={saving}
+                  onChange={(event) => {
+                    const checked = event.target.checked;
+                    setIncludeDisabled(checked);
+                    if (!checked) {
+                      setSelected((current) => current.filter((id) =>
+                        sourceRules.find((rule) => rule.id === id)?.is_enabled
+                      ));
+                    }
+                    setReviewing(false);
+                  }}
+                />
+                Include deactivated rules
+              </label>
               <div className="copy-rules-summary">
                 {copyableRules.length} copyable of{" "}
                 {sourceRules.length} rules
@@ -468,6 +453,8 @@ export default function CopyRulesModal({
               <div className="copy-rules-list">
                 {eligibleRules.map((rule) => {
                   const reason = rule.copyCheck.reason;
+                  const deactivated = !rule.is_enabled;
+                  const excluded = deactivated && !includeDisabled;
 
                   return (
                     <label
@@ -477,7 +464,7 @@ export default function CopyRulesModal({
                       <input
                         type="checkbox"
                         checked={selected.includes(rule.id)}
-                        disabled={saving || Boolean(reason)}
+                        disabled={saving || Boolean(reason) || excluded}
                         onChange={() => toggleRule(rule.id)}
                       />
 
@@ -485,7 +472,7 @@ export default function CopyRulesModal({
                         <strong>{rule.name}</strong>
 
                         <small>
-                          {rule.rule_type} · {rule.severity}
+                          {rule.rule_type} · {rule.severity} · {deactivated ? "Deactivated" : "Activated"}
                           {rule.copyCheck.variable
                             ? ` · Variable: ${rule.copyCheck.variable.name}`
                             : ""}
@@ -504,6 +491,12 @@ export default function CopyRulesModal({
             </>
           )}
 
+          {reviewing && (
+            <div className="copy-rules-confirmation" role="status">
+              Copy {selected.length} selected rule(s) to this asset? Source rules will remain unchanged; copied rules will be created inactive.
+            </div>
+          )}
+
           {results && (
             <div
               className="copy-rules-results"
@@ -516,25 +509,15 @@ export default function CopyRulesModal({
               {results.copied.length > 0 && (
                 <p>
                   Created disabled:{" "}
-                  {results.copied.join(", ")}
+                  {results.copied.map((rule) => rule.name).join(", ")}
                 </p>
               )}
 
-              {results.failed.length > 0 && (
-                <>
-                  <p>
-                    {results.failed.length} rule(s) could
-                    not be copied:
-                  </p>
-
-                  <ul>
-                    {results.failed.map((item, index) => (
-                      <li key={`${item.name}-${index}`}>
-                        {item.name}: {item.reason}
-                      </li>
-                    ))}
-                  </ul>
-                </>
+              {results.alreadyCopied.length > 0 && (
+                <p>{results.alreadyCopied.length} matching rule(s) were already on this asset.</p>
+              )}
+              {results.excludedDisabled > 0 && (
+                <p>{results.excludedDisabled} deactivated rule(s) were excluded.</p>
               )}
             </div>
           )}
@@ -553,12 +536,17 @@ export default function CopyRulesModal({
           <button
             type="button"
             className="btn-primary"
-            onClick={copyRules}
-            disabled={saving || !selected.length}
+            onClick={() => {
+              if (reviewing) copyRules();
+              else setReviewing(true);
+            }}
+            disabled={saving || !selected.length || loading}
           >
             {saving
               ? "Copying…"
-              : `Copy selected (${selected.length})`}
+              : reviewing
+                ? `Confirm copy (${selected.length})`
+                : `Review copy (${selected.length})`}
           </button>
         </footer>
       </section>

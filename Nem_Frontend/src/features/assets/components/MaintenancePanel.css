@@ -1,0 +1,70 @@
+.maintenance-heading h2 { margin: 0 0 4px; }
+.maintenance-heading p { margin: 0; }
+.maintenance-summary {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(110px, 1fr));
+  gap: 10px;
+  margin: 14px 0 18px;
+}
+.maintenance-summary > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-panel);
+}
+.maintenance-summary span { color: var(--muted); font-size: 13px; }
+.maintenance-summary strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+.maintenance-table-wrap { overflow-x: auto; }
+.maintenance-table { min-width: 1000px; }
+.maintenance-end { display: block; color: var(--muted); font-size: 12px; }
+.maintenance-status {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+.maintenance-status.in_progress { color: var(--action); }
+.maintenance-status.completed { color: var(--ok); }
+.maintenance-status.cancelled { color: var(--muted); }
+.maintenance-status.planned { color: var(--warn); }
+.maintenance-actions { display: flex; flex-wrap: wrap; gap: 6px; min-width: 220px; }
+.maintenance-actions button { padding: 5px 9px; font-size: 12px; }
+.maintenance-form { max-height: 70vh; overflow-y: auto; padding-right: 4px; }
+.maintenance-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 14px;
+}
+.maintenance-form-wide { grid-column: 1 / -1; }
+.maintenance-checkbox { display: flex; align-items: center; gap: 9px; }
+.maintenance-checkbox input { width: auto; }
+.maintenance-schedules { margin-top: 28px; }
+.maintenance-schedules h3 { margin-bottom: 10px; }
+.maintenance-status.due_today { color: var(--warn); }
+.maintenance-status.overdue { color: var(--danger, #c0392b); }
+.maintenance-status.upcoming { color: var(--action); }
+.maintenance-details {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.7fr) minmax(0, 1.3fr);
+  gap: 10px 16px;
+  margin: 16px 0;
+}
+.maintenance-details dt { color: var(--muted); }
+.maintenance-details dd { margin: 0; overflow-wrap: anywhere; }
+.capitalize { text-transform: capitalize; }
+@media (max-width: 700px) {
+  .maintenance-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .maintenance-form-grid { grid-template-columns: 1fr; }
+  .maintenance-form-wide { grid-column: auto; }
+}
+@media (max-width: 480px) {
+  .maintenance-heading { align-items: flex-start; flex-direction: column; }
+  .maintenance-details { grid-template-columns: 1fr; gap: 4px; }
+  .maintenance-details dd { margin-bottom: 10px; }
+}

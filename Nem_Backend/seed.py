@@ -3,11 +3,9 @@ from datetime import datetime, timedelta, timezone
 from app.db.init_db import initialize_database
 from sqlalchemy import select
 from sqlalchemy.orm import Session
-
 from app.core.config import get_settings
 from app.db.session import create_database_engine, create_session_factory
 from app.models import Asset, Reading, Variable
-
 
 DEMO_ASSETS = (
     ("asset-01", "Demo Asset 01", "equipment", None),
@@ -31,7 +29,6 @@ DEMO_READINGS = (
     ("asset-05", "temperature", 36.5, timedelta(minutes=25)),
     ("asset-05", "operating_status", "stopped", timedelta(minutes=24)),
 )
-
 
 def seed_demo_data(session: Session) -> None:
     configured_root_name = os.getenv("DEMO_ROOT_NAME", "Demo Root Asset").strip()
@@ -101,7 +98,6 @@ def seed_demo_data(session: Session) -> None:
                 session.add(variable)
                 session.flush()
             variables[(asset_key, key)] = variable
-
     now = datetime.now(timezone.utc)
     for asset_key, variable_key, value, age in DEMO_READINGS:
         recorded_at = now - age
@@ -124,20 +120,13 @@ def seed_demo_data(session: Session) -> None:
             )
     session.commit()
 
-
-
 def main() -> None:
-    engine = create_database_engine(get_settings().database_url)
-
-    
+    engine = create_database_engine(get_settings().database_url)    
     initialize_database(engine)
-
     with create_session_factory(engine)() as session:
         seed_demo_data(session)
-
     engine.dispose()
     print("Demo assets, variables, and readings are ready.")
-
 
 if __name__ == "__main__":
     main()

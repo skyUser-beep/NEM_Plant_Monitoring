@@ -1,5 +1,4 @@
 from functools import lru_cache # Caches the settings object so it doesn`t need to be recreated every time
-
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
@@ -25,11 +24,9 @@ class Settings(BaseSettings):
     cors_origins: str = ""
     monitoring_evaluation_interval_seconds: int = Field(default=15, ge=1, le=3600)
     monitoring_scheduler_enabled: bool = True
+    maintenance_due_alerts_enabled: bool = True
     monitoring_default_stale_after_seconds: int = Field(default=300, ge=1, le=31_536_000)
     opcua_endpoint: str = ""
-    opcua_client_cert: str = ""
-    opcua_client_key: str = ""
-    opcua_server_cert: str = ""
     opcua_username: str = ""
     opcua_password: SecretStr = SecretStr("")
     opcua_timeout_seconds: int = Field(default=10, ge=1, le=120)

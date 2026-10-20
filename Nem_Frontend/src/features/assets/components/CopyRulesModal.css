@@ -125,6 +125,33 @@
   font-weight: 600;
 }
 
+.copy-rules-modal .copy-rules-include-disabled {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 16px 0 8px;
+  color: #475569;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.copy-rules-modal .copy-rules-include-disabled input {
+  width: 16px;
+  height: 16px;
+  accent-color: #2563eb;
+}
+
+.copy-rules-modal .copy-rules-confirmation {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border: 1px solid #fbbf24;
+  border-radius: 10px;
+  background: #fffbeb;
+  color: #92400e;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
 .copy-rules-modal .copy-rules-list {
   display: flex;
   flex-direction: column;

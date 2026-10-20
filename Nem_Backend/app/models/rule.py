@@ -1,10 +1,11 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    Date,
     ForeignKey,
     Index,
     JSON,
@@ -88,12 +89,31 @@ class Alert(Base):
             unique=True,
             postgresql_where=text("status = 'active'"),
         ),
+        Index(
+            "uq_nem_alerts_active_maintenance_due",
+            "maintenance_schedule_id",
+            "maintenance_due_date",
+            unique=True,
+            postgresql_where=text(
+                "status = 'active' AND maintenance_schedule_id IS NOT NULL"
+            ),
+        ),
+        CheckConstraint(
+            "(rule_id IS NOT NULL AND maintenance_schedule_id IS NULL) OR "
+            "(rule_id IS NULL AND maintenance_schedule_id IS NOT NULL "
+            "AND maintenance_due_date IS NOT NULL)",
+            name="ck_nem_alerts_source",
+        ),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    rule_id: Mapped[int] = mapped_column(
-        ForeignKey("nem_monitoring_rules.id", ondelete="RESTRICT"), nullable=False, index=True
+    rule_id: Mapped[int | None] = mapped_column(
+        ForeignKey("nem_monitoring_rules.id", ondelete="RESTRICT"), nullable=True, index=True
     )
+    maintenance_schedule_id: Mapped[int | None] = mapped_column(
+        ForeignKey("nem_maintenance_schedules.id", ondelete="RESTRICT"), index=True
+    )
+    maintenance_due_date: Mapped[date | None] = mapped_column(Date)
     target_asset_id: Mapped[int] = mapped_column(
         ForeignKey("assets.id", ondelete="RESTRICT"), nullable=False, index=True
     )

@@ -57,22 +57,13 @@ def validate_targets(
             )
     if rule_type == "parameter_threshold":
         if variable is None or variable.data_type not in {"number", "integer"}:
-            raise HTTPException(
-                status_code=422,
-                detail="Parameter threshold rules require a numeric variable",
-            )
+            raise HTTPException(status_code=422,detail="Parameter threshold rules require a numeric variable",)
         if operator is None or threshold is None:
-            raise HTTPException(
-                status_code=422,
-                detail="Parameter threshold rules require an operator and threshold",
-            )
+            raise HTTPException(status_code=422, detail="Parameter threshold rules require an operator and threshold",)
     if rule_type in {"runtime_duration", "duration"}:
         duration = parameters.get("duration_seconds") if parameters else None
         if not isinstance(duration, int) or isinstance(duration, bool) or duration <= 0:
-            raise HTTPException(
-                status_code=422,
-                detail="Runtime rules require a positive parameters.duration_seconds",
-            )
+            raise HTTPException(status_code=422,detail="Runtime rules require a positive parameters.duration_seconds",)
     if rule_type == "boolean_count_threshold":
         if (
             asset is None
@@ -81,22 +72,13 @@ def validate_targets(
             or not variable.is_active
             or variable.data_type != "boolean"
         ):
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "Boolean count threshold rules require an active "
-                    "Boolean variable"
-                ),
+            raise HTTPException(status_code=422,detail=("Boolean count threshold rules require an active Boolean variable"),
             )
         if cycle_signal_mapping != (target_asset_id, variable_id):
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "Boolean count threshold rules must target the active Boolean "
+            raise HTTPException(status_code=422,detail=("Boolean count threshold rules must target the active Boolean "
                     "variable configured as this asset's OPC UA cycle signal."
                 ),
             )
-
         parameters = parameters or {}
         warning_thresholds = parameters.get("warning_thresholds")
         alert_threshold = parameters.get("alert_threshold")
@@ -115,10 +97,7 @@ def validate_targets(
             or isinstance(alert_threshold, bool)
             or alert_threshold <= warning_thresholds[1]
         ):
-            raise HTTPException(
-                status_code=422,
-                detail=(
-                    "Configure two increasing positive warning thresholds "
+            raise HTTPException(status_code=422,detail=("Configure two increasing positive warning thresholds "
                     "and a larger positive alert threshold"
                 ),
             )
@@ -225,10 +204,7 @@ def update_rule(
     if target_fields.intersection(changes) and session.scalar(
         select(RuleState.id).where(RuleState.rule_id == rule.id).limit(1)
     ):
-        raise HTTPException(
-            status_code=409,
-            detail="A rule target cannot be changed after evaluation state exists",
-        )
+        raise HTTPException(status_code=409,detail="A rule target cannot be changed after evaluation state exists",)
     if target_fields.intersection(changes) and session.scalar(
         select(Alert.id).where(Alert.rule_id == rule.id, Alert.status == "active").limit(1)
     ):

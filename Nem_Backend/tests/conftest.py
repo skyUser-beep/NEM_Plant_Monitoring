@@ -7,6 +7,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app.core.config import get_settings
 from app.db.base import Base
+from app.db.init_db import initialize_database
 from app.db.session import create_database_engine
 from app.main import create_app
 from app import models  # noqa: F401
@@ -21,7 +22,7 @@ def test_database_engine() -> Iterator[Engine]:
             pytrace=False,
         )
     engine = create_database_engine(settings.test_database_url)
-    Base.metadata.create_all(bind=engine)
+    initialize_database(engine)
     yield engine
     engine.dispose()
 
@@ -37,6 +38,7 @@ def client(test_database_engine: Engine) -> Iterator[TestClient]:
             update={
                 "database_url": database_url,
                 "monitoring_scheduler_enabled": False,
+                "maintenance_due_alerts_enabled": False,
                 "opcua_machine_mappings": "",
             }
         )

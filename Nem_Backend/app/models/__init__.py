@@ -1,5 +1,4 @@
 from app.models.asset import Asset
-from app.models.maintenance_instruction import MaintenanceInstruction
 from app.models.maintenance import MaintenanceRecord
 from app.models.machine_monitoring import MachineMonitoringState
 from app.models.frontend_data import (
@@ -15,6 +14,7 @@ from app.models.variable import Variable
 
 __all__ = [
     "Asset", "Variable", "Reading", "MonitoringRule", "RuleState", "MaintenanceRecord",
+    "MaintenanceSchedule",
     "Alert", "MonitoringEvent", "SchedulerLease",
     "MachineMonitoringState",
     "FrontendConfig", "RuleCollection", "InstructionDocument", "BackupRecord", "InstructionDocumentFile",

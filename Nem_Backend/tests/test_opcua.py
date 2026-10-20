@@ -2,6 +2,8 @@ import asyncio
 from datetime import datetime, timezone
 
 import pytest
+from asyncua import ua
+from asyncua.ua.ua_binary import struct_to_binary
 from fastapi.testclient import TestClient
 
 from app.core.config import Settings
@@ -14,6 +16,15 @@ from app.services.opcua_client import (
 from tests.test_api import create_asset, create_variable
 
 _SETTINGS_DATABASE_URL = "postgresql+psycopg://localhost/opcua_settings_test"
+
+
+def test_secure_channel_request_serializes_with_installed_asyncua():
+    request = ua.OpenSecureChannelRequest()
+    request.Parameters = ua.OpenSecureChannelParameters()
+
+    encoded = struct_to_binary(request)
+
+    assert encoded
 
 
 def test_unconfigured_opcua_endpoints_return_setup_error(client: TestClient):
@@ -84,28 +95,13 @@ def test_opcua_value_must_match_existing_variable_type(client, monkeypatch):
     assert client.get(f"/api/v1/readings/variables/{variable_id}/latest").status_code == 404
 
 
-def test_opcua_connection_requires_all_pinned_certificate_files(tmp_path):
+def test_opcua_connection_does_not_require_certificates():
     settings = Settings(
         _env_file=None,
         database_url=_SETTINGS_DATABASE_URL,
         opcua_endpoint="opc.tcp://127.0.0.1:4840",
     )
-    with pytest.raises(OpcUaConfigurationError, match="OPCUA_CLIENT_CERT"):
-        _validate_connection_settings(settings)
-
-    cert = tmp_path / "client.der"
-    key = tmp_path / "client-key.pem"
-    for path in (cert, key):
-        path.write_bytes(b"placeholder")
-    settings = Settings(
-        _env_file=None,
-        database_url=_SETTINGS_DATABASE_URL,
-        opcua_endpoint="opc.tcp://127.0.0.1:4840",
-        opcua_client_cert=str(cert),
-        opcua_client_key=str(key),
-    )
-    with pytest.raises(OpcUaConfigurationError, match="OPCUA_SERVER_CERT"):
-        _validate_connection_settings(settings)
+    assert _validate_connection_settings(settings) == settings.opcua_endpoint
 
 
 def test_opcua_rejects_credentials_embedded_in_endpoint_and_partial_auth():
@@ -127,24 +123,13 @@ def test_opcua_rejects_credentials_embedded_in_endpoint_and_partial_auth():
         _validate_connection_settings(partial_auth)
 
 
-def test_opcua_client_uses_sign_encrypt_and_pinned_server_certificate(tmp_path, monkeypatch):
-    paths = {
-        key: tmp_path / filename
-        for key, filename in (
-            ("opcua_client_cert", "client.der"),
-            ("opcua_client_key", "client-key.pem"),
-            ("opcua_server_cert", "trusted-plc.der"),
-        )
-    }
-    for path in paths.values():
-        path.write_bytes(b"placeholder")
+def test_opcua_client_uses_no_transport_security_and_optional_username_password(
+    monkeypatch,
+):
     settings = Settings(
         _env_file=None,
         database_url=_SETTINGS_DATABASE_URL,
         opcua_endpoint="opc.tcp://127.0.0.1:4840/machine",
-        opcua_client_cert=str(paths["opcua_client_cert"]),
-        opcua_client_key=str(paths["opcua_client_key"]),
-        opcua_server_cert=str(paths["opcua_server_cert"]),
         opcua_username="operator",
         opcua_password="secret-password",
     )
@@ -169,7 +154,7 @@ def test_opcua_client_uses_sign_encrypt_and_pinned_server_certificate(tmp_path, 
             captured["timeout"] = timeout
 
         async def set_security_string(self, security):
-            captured["security"] = security
+            raise AssertionError("Transport security must remain disabled for testing")
 
         def set_user(self, username):
             captured["username"] = username
@@ -187,12 +172,13 @@ def test_opcua_client_uses_sign_encrypt_and_pinned_server_certificate(tmp_path, 
             captured["node_id"] = node_id
             return FakeNode()
 
-    monkeypatch.setattr("app.services.opcua_client.Client", FakeClient)
+    monkeypatch.setattr(
+        "app.services.opcua_client._ConfiguredOpcUaClient", FakeClient
+    )
     result = asyncio.run(read_opcua_node(settings, "i=2258"))
 
     assert result.value == datetime(2026, 1, 1, tzinfo=timezone.utc)
-    assert "Basic256Sha256,SignAndEncrypt" in captured["security"]
-    assert str(paths["opcua_server_cert"]) in captured["security"]
+    assert captured["endpoint"] == settings.opcua_endpoint
     assert captured["username"] == "operator"
     assert captured["password"] == "secret-password"
     assert captured["operation"] == "read_data_value"
