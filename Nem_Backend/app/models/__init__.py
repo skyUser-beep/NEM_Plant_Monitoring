@@ -1,4 +1,5 @@
 from app.models.asset import Asset
+from app.models.maintenance_instruction import MaintenanceInstruction
 from app.models.maintenance import MaintenanceRecord
 from app.models.machine_monitoring import MachineMonitoringState
 from app.models.frontend_data import (

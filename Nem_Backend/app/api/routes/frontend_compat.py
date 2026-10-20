@@ -1,5 +1,4 @@
-﻿#FastApi router that connects your react frontend to your backend and postgreSQL database
-
+﻿
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -106,6 +105,31 @@ class LogbookEntry(BaseModel):
         if not value:
             raise ValueError("Logbook entry cannot be empty")
         return value
+
+    
+class InstructionCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=50)
+    labels: list[str] = Field(default_factory=list, max_length=10)
+    duration_minutes: int = Field(default=30, ge=1)
+    text: str = Field(min_length=1, max_length=10000)
+
+    @field_validator("name", "text")
+    @classmethod
+    def strip_required_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("This field cannot be empty")
+        return value
+
+    @field_validator("labels")
+    @classmethod
+    def validate_labels(cls, values: list[str]) -> list[str]:
+        cleaned = [value.strip() for value in values]
+        if any(len(value) < 2 or len(value) > 50 for value in cleaned):
+            raise ValueError("Each label must contain 2 to 50 characters")
+        if len(set(cleaned)) != len(cleaned):
+            raise ValueError("Labels must be unique")
+        return cleaned
 #All the above classes are use to make sure invalid data is rejected before it reaches the database, and to provide clear error messages to the frontend.
 
 #Retrieves a saved configuration record
@@ -467,6 +491,49 @@ def delete_collection(collection_id: int, session: Session = Depends(get_db)) ->
         raise HTTPException(status_code=404, detail="Collection was not found")
     session.delete(collection)
     session.commit()
+
+
+@router.get("/instructions")
+def list_maintenance_instructions(
+    session: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    rows = session.scalars(
+        select(MaintenanceInstruction).order_by(MaintenanceInstruction.id.desc())
+    ).all()
+    return [
+        {
+            "id": row.id,
+            "name": row.name,
+            "labels": row.labels,
+            "duration_minutes": row.duration_minutes,
+            "text": row.text,
+        }
+        for row in rows
+    ]
+
+
+@router.post("/instructions", status_code=201)
+def create_maintenance_instruction(
+    payload: InstructionCreate,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    instruction = MaintenanceInstruction(
+        name=payload.name,
+        labels=payload.labels,
+        duration_minutes=payload.duration_minutes,
+        text=payload.text,
+    )
+    session.add(instruction)
+    session.commit()
+    session.refresh(instruction)
+    return {
+        "id": instruction.id,
+        "name": instruction.name,
+        "labels": instruction.labels,
+        "duration_minutes": instruction.duration_minutes,
+        "text": instruction.text,
+    }
+
 
 #Instruction Documents
 # Lists documents
