@@ -244,6 +244,7 @@ def _emit_maintenance_event(
     *,
     event_type: str,
     message: str,
+    details: dict[str, object] | None = None,
 ) -> None:
     alert = session.get(Alert, record.alert_id) if record.alert_id is not None else None
     emit_event(
@@ -259,7 +260,7 @@ def _emit_maintenance_event(
             "next_due_at": (
                 record.next_due_at.isoformat() if record.next_due_at else None
             ),
-        },
+        } | (details or {}),
     )
 
 #Create an individual maintenance record
@@ -763,6 +764,7 @@ def list_maintenance_records(
     conditions = []
     if not include_archived:
         conditions.append(MaintenanceRecord.archived_at.is_(None))
+        conditions.append(MaintenanceRecord.status != "completed")
     if asset_id is not None:
         conditions.append(MaintenanceRecord.asset_id == asset_id)
     if alert_id is not None:
@@ -984,9 +986,13 @@ def complete_maintenance_record(
         raise HTTPException(status_code=409,detail="Completed or cancelled maintenance cannot be completed",)
     completed_at = record.actual_completed_at or utc_now()
     record.actual_completed_at = completed_at
+    record.actual_started_at = record.actual_started_at or completed_at
     _validate_record_dates(record)
     record.performed_at = completed_at
     record.status = "completed"
+    record.archived_at = completed_at
+    actual_start = _normalized(record.actual_started_at)
+    normalized_completed_at = _normalized(completed_at)
     if record.schedule_id is not None:
         schedule = _schedule_or_404(session, record.schedule_id)
         due_alert = session.scalar(
@@ -1038,6 +1044,36 @@ def complete_maintenance_record(
         record,
         event_type="maintenance_completed",
         message=f"Maintenance completed: {record.summary}.",
+        details={
+            "title": record.summary,
+            "maintenance_type": record.maintenance_type,
+            "priority": record.priority,
+            "assigned_technician": record.assigned_technician or record.performed_by,
+            "notes": record.notes,
+            "completion_notes": record.completion_notes,
+            "parts_used": record.parts_used,
+            "checklist": record.checklist,
+            "planned_start_at": (
+                record.planned_start_at.isoformat() if record.planned_start_at else None
+            ),
+            "planned_end_at": (
+                record.planned_end_at.isoformat() if record.planned_end_at else None
+            ),
+            "actual_started_at": actual_start.isoformat() if actual_start else None,
+            "actual_completed_at": (
+                normalized_completed_at.isoformat()
+                if normalized_completed_at
+                else None
+            ),
+            "actual_duration_seconds": max(
+                0,
+                int((normalized_completed_at - actual_start).total_seconds()),
+            ),
+            "schedule_id": record.schedule_id,
+            "planned_due_date": (
+                record.planned_due_date.isoformat() if record.planned_due_date else None
+            ),
+        },
     )
     session.commit()
     session.refresh(record)

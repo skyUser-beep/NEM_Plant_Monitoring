@@ -88,6 +88,7 @@ function computeHealth(assets, alerts) {
   const own = new Map();
 
   for (const alert of alerts) {
+    if (alert.maintenance_schedule_id != null) continue;
     const current = own.get(alert.target_asset_id) || "ok";
     if (RANK[alert.severity] > RANK[current]) {
       own.set(alert.target_asset_id, alert.severity);

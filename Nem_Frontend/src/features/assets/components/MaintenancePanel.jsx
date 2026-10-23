@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Trash2 } from "lucide-react";
+import { FileText, Timer, Trash2 } from "lucide-react";
 import { api } from "../../../services/api.js";
 import { EmptyState, Modal } from "../../../components/common/UI.jsx";
 import { formatTime } from "../../../utils/format.js";
@@ -60,12 +60,13 @@ function nullableDate(value) {
   return value ? new Date(value).toISOString() : null;
 }
 
-function actualDuration(record) {
-  if (!record.actual_started_at || !record.actual_completed_at) return "—";
+function actualDuration(record, now = Date.now()) {
+  if (!record.actual_started_at) return "—";
+  const endTime = record.actual_completed_at
+    ? new Date(record.actual_completed_at).getTime()
+    : now;
   const seconds =
-    (new Date(record.actual_completed_at).getTime() -
-      new Date(record.actual_started_at).getTime()) /
-    1000;
+    (endTime - new Date(record.actual_started_at).getTime()) / 1000;
   if (!Number.isFinite(seconds) || seconds < 0) return "—";
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);
@@ -137,11 +138,11 @@ function validateForm(values, requirePlannedDates) {
   return "";
 }
 
-export default function MaintenancePanel({ assetId, onChanged }) {
+export default function MaintenancePanel({ assetId, focusScheduleId, onChanged }) {
   const navigate = useNavigate();
   const [records, setRecords] = useState([]);
-  const [archivedRecords, setArchivedRecords] = useState([]);
   const [schedules, setSchedules] = useState([]);
+  const [schedulesLoaded, setSchedulesLoaded] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [deletingScheduleId, setDeletingScheduleId] = useState(null);
@@ -165,30 +166,8 @@ export default function MaintenancePanel({ assetId, onChanged }) {
     status: "active",
   });
   const [approvalDate, setApprovalDate] = useState("");
-
-  const archiveCompleted = async (record) => {
-    if (busy) return;
-    if (
-      !window.confirm(
-        `Move completed maintenance "${record.title}" to the archived maintenance log? The record will be retained.`
-      )
-    ) {
-      return;
-    }
-    setBusy(true);
-    setError("");
-    setNotice("");
-    try {
-      await api.del(`/maintenance/${record.id}`);
-      setNotice("Completed maintenance moved to the archived log.");
-      await Promise.all([loadRecords(), loadArchivedRecords()]);
-      await onChanged?.();
-    } catch (requestError) {
-      setError(requestError.message || "Could not archive completed maintenance.");
-    } finally {
-      setBusy(false);
-    }
-  };
+  const [clockNow, setClockNow] = useState(Date.now());
+  const handledFocusScheduleId = useRef(null);
 
   const permanentlyDeleteRecord = async (record) => {
     if (busy) return;
@@ -216,7 +195,7 @@ export default function MaintenancePanel({ assetId, onChanged }) {
     try {
       await api.del(`/maintenance/${record.id}/permanent`);
       setNotice("Maintenance was permanently deleted.");
-      await Promise.all([loadRecords(), loadArchivedRecords(), loadSchedules()]);
+      await Promise.all([loadRecords(), loadSchedules()]);
       await onChanged?.();
     } catch (requestError) {
       setError(
@@ -245,7 +224,7 @@ export default function MaintenancePanel({ assetId, onChanged }) {
     try {
       await api.del(`/maintenance/schedules/${schedule.id}/permanent`);
       setNotice("Maintenance schedule was permanently deleted.");
-      await Promise.all([loadRecords(), loadArchivedRecords(), loadSchedules()]);
+      await Promise.all([loadRecords(), loadSchedules()]);
       await onChanged?.();
     } catch (requestError) {
       setError(
@@ -273,32 +252,64 @@ export default function MaintenancePanel({ assetId, onChanged }) {
   }, [assetId]);
 
   const loadSchedules = useCallback(async () => {
+    setSchedulesLoaded(false);
     try {
       const result = await api.getAll(`/maintenance/schedules?asset_id=${assetId}`);
       setSchedules(Array.isArray(result) ? result : []);
     } catch (requestError) {
       setError(requestError.message || "Could not load maintenance schedules.");
-    }
-  }, [assetId]);
-
-  const loadArchivedRecords = useCallback(async () => {
-    try {
-      const result = await api.getAll(
-        `/maintenance?asset_id=${assetId}&include_archived=true&limit=200`
-      );
-      setArchivedRecords(
-        Array.isArray(result) ? result.filter((record) => record.archived_at) : []
-      );
-    } catch (requestError) {
-      setError(requestError.message || "Could not load archived maintenance.");
+    } finally {
+      setSchedulesLoaded(true);
     }
   }, [assetId]);
 
   useEffect(() => {
     loadRecords();
     loadSchedules();
-    loadArchivedRecords();
-  }, [loadRecords, loadSchedules, loadArchivedRecords]);
+  }, [loadRecords, loadSchedules]);
+
+  useEffect(() => {
+    if (
+      !focusScheduleId ||
+      loading ||
+      !schedulesLoaded ||
+      handledFocusScheduleId.current === String(focusScheduleId)
+    ) {
+      return;
+    }
+
+    handledFocusScheduleId.current = String(focusScheduleId);
+    const schedule = schedules.find(
+      (item) => String(item.id) === String(focusScheduleId)
+    );
+    if (!schedule) {
+      setError("The maintenance schedule for this alert could not be found.");
+      return;
+    }
+
+    const occurrence = records.find(
+      (record) =>
+        schedule.current_occurrence_id != null &&
+        String(record.id) === String(schedule.current_occurrence_id)
+    ) || records.find(
+      (record) =>
+        String(record.schedule_id) === String(schedule.id) &&
+        ["planned", "in_progress"].includes(record.status)
+    );
+
+    setDialog(
+      occurrence
+        ? { kind: "details", record: occurrence }
+        : { kind: "schedule-details", record: schedule }
+    );
+  }, [focusScheduleId, loading, records, schedules, schedulesLoaded]);
+
+  useEffect(() => {
+    const timerIsRunning = records.some((record) => record.status === "in_progress");
+    if (!timerIsRunning) return undefined;
+    const timer = window.setInterval(() => setClockNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [records]);
 
   useEffect(() => {
     if (!dialog || dialog.kind === "details") return;
@@ -417,7 +428,7 @@ const openScheduleEdit = (schedule) => {
             ? "Maintenance schedule created."
             : "Maintenance schedule updated."
         );
-        await Promise.all([loadSchedules(), loadRecords(), loadArchivedRecords()]);
+        await Promise.all([loadSchedules(), loadRecords()]);
         await onChanged?.();
       } catch (requestError) {
         setError(requestError.message || "Could not save maintenance schedule.");
@@ -474,7 +485,7 @@ const openScheduleEdit = (schedule) => {
       await api.patch(`/maintenance/${dialog.record.id}`, payload);
       setDialog(null);
       setNotice("Maintenance job updated.");
-      await Promise.all([loadRecords(), loadArchivedRecords()]);
+      await loadRecords();
       await onChanged?.();
     } catch (requestError) {
       setError(requestError.message || "Could not save maintenance.");
@@ -544,6 +555,47 @@ const openScheduleEdit = (schedule) => {
       setBusy(false);
     }
   };
+  const changeMaintenanceStatus = async (record) => {
+    if (busy) return;
+    const isStarting = record.status === "planned";
+    if (!isStarting && record.status !== "in_progress") return;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const updatedRecord = await api.post(
+        `/maintenance/${record.id}/${isStarting ? "start" : "complete"}`
+      );
+      if (!isStarting && updatedRecord.schedule_id) {
+        const updatedSchedules = await api.getAll(
+          `/maintenance/schedules?asset_id=${assetId}`
+        );
+        setSchedules(Array.isArray(updatedSchedules) ? updatedSchedules : []);
+        const updatedSchedule = updatedSchedules.find(
+          (schedule) => schedule.id === updatedRecord.schedule_id
+        );
+        if (updatedSchedule?.approval_status === "pending") {
+          setApprovalDate(updatedSchedule.proposed_due_date || "");
+          setDialog({ kind: "approval", record: updatedSchedule });
+        } else {
+          setDialog({ kind: "details", record: updatedRecord });
+        }
+      } else {
+        setDialog({ kind: "details", record: updatedRecord });
+      }
+      setRecords((previous) =>
+        previous.map((item) => item.id === updatedRecord.id ? updatedRecord : item)
+      );
+      setNotice(isStarting ? "Maintenance started." : "Maintenance finished.");
+      await loadRecords();
+      await onChanged?.();
+      if (!isStarting) await loadSchedules();
+    } catch (requestError) {
+      setError(requestError.message || `Could not ${isStarting ? "start" : "finish"} maintenance.`);
+    } finally {
+      setBusy(false);
+    }
+  };
   const terminalEdit =
     dialog?.kind === "edit" &&
     ["completed", "cancelled"].includes(dialog.record.status);
@@ -603,7 +655,9 @@ const openScheduleEdit = (schedule) => {
                 </div>
                 <div className="maintenance-record-status">
                   <span className={`maintenance-status ${record.status}`}>
-                    {String(record.status || "planned").replaceAll("_", " ")}
+                    {record.status === "in_progress" ? (
+                      <><Timer size={13} aria-hidden="true" /> Started</>
+                    ) : String(record.status || "planned").replaceAll("_", " ")}
                   </span>
                   <small>
                     {record.planned_start_at
@@ -626,7 +680,7 @@ const openScheduleEdit = (schedule) => {
                   </span>
                   <span>
                     <small>Actual duration</small>
-                    <strong>{actualDuration(record)}</strong>
+                    <strong>{actualDuration(record, clockNow)}</strong>
                   </span>
                 </div>
                 <div className="maintenance-actions">
@@ -638,30 +692,29 @@ const openScheduleEdit = (schedule) => {
                   >
                     View
                   </button>
-                  {documentsForRecord(record).length > 0 && (
-                    <button
-                      type="button"
-                      className="btn-outline"
-                      onClick={() => setMaterialViewer({
-                        document: documentsForRecord(record)[0],
-                        file: null,
-                        documents: documentsForRecord(record),
-                      })}
-                      disabled={busy}
-                    >
-                      Instructions / documents
-                    </button>
-                  )}
-                  {record.status === "completed" && (
-                    <button
-                      type="button"
-                      className="btn-danger"
-                      onClick={() => archiveCompleted(record)}
-                      disabled={busy}
-                    >
-                      Archive
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    className="btn-outline"
+                    onClick={() => {
+                      const documents = documentsForRecord(record);
+                      if (documents.length > 0) {
+                        setMaterialViewer({
+                          document: documents[0],
+                          file: null,
+                          documents,
+                        });
+                      }
+                    }}
+                    disabled={busy || documentsForRecord(record).length === 0}
+                    title={
+                      documentsForRecord(record).length > 0
+                        ? "View attached instructions and documents"
+                        : "No instruction or document attached"
+                    }
+                  >
+                    <FileText size={14} aria-hidden="true" />
+                    Materials
+                  </button>
                   {record.status !== "in_progress" && (
                     <button
                       type="button"
@@ -680,44 +733,6 @@ const openScheduleEdit = (schedule) => {
           </div>
         )}
 
-        {!loading && archivedRecords.length > 0 && (
-          <div className="maintenance-schedules">
-            <h3>Archived maintenance log</h3>
-            <p className="muted">
-              Archived records remain stored for maintenance history and audit purposes.
-            </p>
-            <div className="maintenance-table-wrap">
-              <table className="table maintenance-table">
-                <thead>
-                  <tr><th>Title</th><th>Type</th><th>Due date</th><th>Completed</th><th>Archived</th><th>Actions</th></tr>
-                </thead>
-                <tbody>
-                  {archivedRecords.map((record) => (
-                    <tr key={record.id}>
-                      <td>{record.title}</td>
-                      <td className="capitalize">{record.maintenance_type}</td>
-                      <td>{displayDate(record.planned_due_date)}</td>
-                      <td>{record.actual_completed_at ? formatTime(record.actual_completed_at) : "—"}</td>
-                      <td>{formatTime(record.archived_at)}</td>
-                      <td>
-                        <button
-                          type="button"
-                          className="maintenance-delete-icon"
-                          title="Permanently delete archived maintenance"
-                          aria-label={`Permanently delete archived maintenance ${record.title}`}
-                          onClick={() => permanentlyDeleteRecord(record)}
-                          disabled={busy}
-                        >
-                          <Trash2 size={16} aria-hidden="true" />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
       </section>
 
       {(dialog?.kind === "schedule-create" || dialog?.kind === "schedule-edit") && (
@@ -888,11 +903,13 @@ const openScheduleEdit = (schedule) => {
 
       {dialog?.kind === "details" && (
         <Modal title="Maintenance details" onClose={() => setDialog(null)} wide>
+          {error && <p className="notice error" role="alert">{error}</p>}
           <dl className="maintenance-details">
             <dt>Title</dt><dd>{dialog.record.title}</dd>
             <dt>Type / status / priority</dt><dd>{dialog.record.maintenance_type} / {dialog.record.status.replace("_", " ")} / {dialog.record.priority}</dd>
             <dt>Planned start / end</dt><dd>{formatTime(dialog.record.planned_start_at)} – {formatTime(dialog.record.planned_end_at)}</dd>
             <dt>Actual start / completion</dt><dd>{formatTime(dialog.record.actual_started_at)} – {formatTime(dialog.record.actual_completed_at)}</dd>
+            <dt>Actual duration</dt><dd>{actualDuration(dialog.record, clockNow)}</dd>
             <dt>Assigned technician</dt><dd>{dialog.record.assigned_technician || "—"}</dd>
             <dt>Description / work details</dt><dd>{dialog.record.notes || "—"}</dd>
             <dt>Completion notes</dt><dd>{dialog.record.completion_notes || "—"}</dd>
@@ -903,6 +920,26 @@ const openScheduleEdit = (schedule) => {
             <dd>{dialog.record.checklist?.length ? dialog.record.checklist.map((item) => `${item.completed ? "✓" : "○"} ${item.item}`).join(", ") : "—"}</dd>
           </dl>
           <div className="modal-actions">
+            {dialog.record.status === "planned" && (
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => changeMaintenanceStatus(dialog.record)}
+                disabled={busy}
+              >
+                {busy ? "Starting…" : "Start"}
+              </button>
+            )}
+            {dialog.record.status === "in_progress" && (
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => changeMaintenanceStatus(dialog.record)}
+                disabled={busy}
+              >
+                {busy ? "Finishing…" : "Finish"}
+              </button>
+            )}
             <button
             type="button"
             className="btn-outline"

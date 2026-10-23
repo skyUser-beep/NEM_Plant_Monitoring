@@ -73,13 +73,9 @@ def dashboard_summary(session: Session = Depends(get_db)) -> DashboardSummary:
         .where(
             Alert.status == "active",
             Alert.severity == "alert",
-            or_(
-                Alert.maintenance_schedule_id.is_not(None),
-                and_(
-                    MonitoringRule.is_enabled.is_(True),
-                    MonitoringRule.is_archived.is_(False),
-                ),
-            ),
+            Alert.maintenance_schedule_id.is_(None),
+            MonitoringRule.is_enabled.is_(True),
+            MonitoringRule.is_archived.is_(False),
         )
     ) or 0
     #Counting assets currenly in alert and warning state
@@ -89,13 +85,9 @@ def dashboard_summary(session: Session = Depends(get_db)) -> DashboardSummary:
         .where(
             Alert.status == "active",
             Alert.severity == "warning",
-            or_(
-                Alert.maintenance_schedule_id.is_not(None),
-                and_(
-                    MonitoringRule.is_enabled.is_(True),
-                    MonitoringRule.is_archived.is_(False),
-                ),
-            ),
+            Alert.maintenance_schedule_id.is_(None),
+            MonitoringRule.is_enabled.is_(True),
+            MonitoringRule.is_archived.is_(False),
         )
     ) or 0
     #Counting total active alerts and unacknowledged active alerts

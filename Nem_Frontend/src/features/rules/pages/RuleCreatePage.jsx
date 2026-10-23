@@ -5,9 +5,9 @@ import { buildAssetMonitoringRule } from "../../assets/rules/monitoringRuleFlow.
 import "./RuleCreatePage.css";
 
 const TITLES = {
-  interval: "Create interval-based rule",
-  usage: "Create usage-based rule",
-  time: "Create Running Time-based rule",
+  interval: "Create Motor Running Time rule",
+  usage: "Create Cycle Clock rule",
+  time: "Create scheduled Running Time rule",
 };
 
 const INITIAL_VALUES = {
@@ -416,7 +416,7 @@ if (activeVariables.length) {
                   Cancel
                 </button>
                 <button type="submit" className="btn-primary" disabled={disableSubmit}>
-                  {saving ? "Saving…" : isScheduled ? "Create scheduled rule" : isUsage ? "Create usage rule" : "Create interval rule"}
+                  {saving ? "Saving…" : isScheduled ? "Create scheduled rule" : isUsage ? "Create Cycle Clock rule" : "Create Motor Running Time rule"}
                 </button>
               </div>
             </form>

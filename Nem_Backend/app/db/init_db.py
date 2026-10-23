@@ -226,6 +226,12 @@ def initialize_database(engine: Engine) -> None:
                     "WHERE status = 'completed' AND actual_completed_at IS NULL"
                 )
             )
+            connection.execute(text(
+                    "UPDATE nem_maintenance_records "
+                    "SET archived_at = COALESCE(actual_completed_at, performed_at, CURRENT_TIMESTAMP) "
+                    "WHERE status = 'completed' AND archived_at IS NULL"
+                )
+            )
 
     if "nem_alerts" in table_names and "nem_maintenance_schedules" in table_names:
         alert_columns = {column["name"]

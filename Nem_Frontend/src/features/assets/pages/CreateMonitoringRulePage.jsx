@@ -26,9 +26,9 @@ const RULE_FIELDS = [
     label: "Rule type",
     type: "select",
     options: [
-      ["parameter_threshold", "Numeric value threshold"],
-      ["boolean_count_threshold", "Boolean cycle-count thresholds"],
-      ["runtime_duration", "Running time"],
+      ["parameter_threshold", "Numeric value threshold (e.g. temperature)"],
+      ["boolean_count_threshold", "Cycle Clock (Boolean ON/OFF count)"],
+      ["runtime_duration", "Motor Running Time"],
     ],
   },
   {
@@ -81,7 +81,7 @@ const RULE_FIELDS = [
   },
   {
     key: "warning_threshold_1",
-    label: "First warning at cycle count",
+    label: "Warning at cycle count",
     type: "number",
     showWhen: { key: "rule_type", equals: "boolean_count_threshold" },
     requiredWhen: { key: "rule_type", equals: "boolean_count_threshold" },
@@ -89,7 +89,7 @@ const RULE_FIELDS = [
   },
   {
     key: "warning_threshold_2",
-    label: "Second warning at cycle count",
+    label: "Higher warning at cycle count",
     type: "number",
     showWhen: { key: "rule_type", equals: "boolean_count_threshold" },
     requiredWhen: { key: "rule_type", equals: "boolean_count_threshold" },

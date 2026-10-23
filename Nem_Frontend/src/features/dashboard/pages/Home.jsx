@@ -416,6 +416,12 @@ export default function Home() {
                       <div className="alert-meta">
                         <Link
                           to={`/assets/${alert.target_asset_id}`}
+                          state={alert.maintenance_schedule_id
+                            ? {
+                                activeTab: "logbook",
+                                focusMaintenanceScheduleId: alert.maintenance_schedule_id,
+                              }
+                            : undefined}
                         >
                           {assetName.get(alert.target_asset_id) ||
                             `Asset ${alert.target_asset_id}`}

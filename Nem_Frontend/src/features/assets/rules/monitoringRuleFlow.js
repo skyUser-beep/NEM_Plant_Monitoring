@@ -1,37 +1,30 @@
 export const MONITORING_RULE_CHOICES = [
   {
     id: "motor_rotation",
-    label: "Motor Rotation",
-    description: "Count completed cycles from this asset's configured cycle signal.",
+    label: "Cycle Clock",
+    description: "Count each OFF-to-ON cycle and alert at the configured count thresholds.",
     ruleType: "boolean_count_threshold",
-    defaultName: "Motor Rotation",
+    defaultName: "Cycle Clock",
   },
   {
     id: "running_time",
-    label: "Running Time",
+    label: "Motor Running Time",
     description: "Accumulate runtime while this asset's Boolean running signal is true.",
     ruleType: "runtime_duration",
-    defaultName: "Running Time",
-  },
-  {
-    id: "boolean_count_threshold",
-    label: "Boolean Count Threshold",
-    description: "Monitor cycle-count warning and alert thresholds for this asset.",
-    ruleType: "boolean_count_threshold",
-    defaultName: "Boolean Count Threshold",
+    defaultName: "Motor Running Time",
   },
 ];
 
 export const LEGACY_RULE_CHOICES = [
   {
     kind: "interval",
-    label: "Interval-based",
-    description: "Track running time while a Boolean signal is ON and alert at runtime thresholds.",
+    label: "Motor Running Time",
+    description: "Accumulate time while the Boolean running signal is ON and alert at runtime thresholds.",
   },
   {
-  kind: "usage",
-  label: "Usage-based",
-  description: "Create a rule using a variable from this asset.",
+    kind: "usage",
+    label: "Cycle Clock",
+    description: "Count OFF-to-ON transitions and set warning and alert cycle-count thresholds.",
   },
   {
     kind: "time",
@@ -41,7 +34,13 @@ export const LEGACY_RULE_CHOICES = [
 ];
 
 export function monitoringRuleFormSelection(choiceId) {
-  const choice = MONITORING_RULE_CHOICES.find((item) => item.id === choiceId);
+  const choice =
+    MONITORING_RULE_CHOICES.find((item) => item.id === choiceId) ||
+    (choiceId === "boolean_count_threshold"
+      ? MONITORING_RULE_CHOICES.find(
+          (item) => item.ruleType === "boolean_count_threshold"
+        )
+      : undefined);
   if (!choice) {
     throw new Error("Select a supported monitoring rule type.");
   }

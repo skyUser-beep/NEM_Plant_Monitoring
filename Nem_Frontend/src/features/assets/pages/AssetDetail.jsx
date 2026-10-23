@@ -212,9 +212,9 @@ const ruleFields = (
     type: "select",
     default: "parameter_threshold",
     options: [
-      ["parameter_threshold", "Numeric value threshold"],
-      ["boolean_count_threshold", "Boolean cycle-count thresholds"],
-      ["runtime_duration", "Running time"],
+      ["parameter_threshold", "Numeric value threshold (e.g. temperature)"],
+      ["boolean_count_threshold", "Cycle Clock (Boolean ON/OFF count)"],
+      ["runtime_duration", "Motor Running Time"],
     ],
     hint: mappingBypassEnabled
       ? "Choose a Boolean variable marked for the signal's actual purpose."
@@ -296,7 +296,7 @@ const ruleFields = (
   },
   {
     key: "warning_threshold_1",
-    label: "First warning at cycle count",
+    label: "Warning at cycle count",
     type: "number",
     showWhen: { key: "rule_type", equals: "boolean_count_threshold" },
     requiredWhen: { key: "rule_type", equals: "boolean_count_threshold" },
@@ -304,7 +304,7 @@ const ruleFields = (
   },
   {
     key: "warning_threshold_2",
-    label: "Second warning at cycle count",
+    label: "Higher warning at cycle count",
     type: "number",
     showWhen: { key: "rule_type", equals: "boolean_count_threshold" },
     requiredWhen: { key: "rule_type", equals: "boolean_count_threshold" },
@@ -455,6 +455,9 @@ export default function AssetDetail() {
 
   const [tab, setTab] = useState(
     location.state?.activeTab === "logbook" ? "logbook" : "status"
+  );
+  const [focusMaintenanceScheduleId, setFocusMaintenanceScheduleId] = useState(
+    () => location.state?.focusMaintenanceScheduleId ?? null
   );
   const [list, setList] = useState("activated");
   const [rules, setRules] = useState([]);
@@ -762,6 +765,12 @@ export default function AssetDetail() {
 
     if (navigationState?.activeTab === "logbook") {
       setTab("logbook");
+    }
+
+    if (navigationState?.focusMaintenanceScheduleId) {
+      setFocusMaintenanceScheduleId(
+        navigationState.focusMaintenanceScheduleId
+      );
     }
 
     if (navigationState?.createdNotice) {
@@ -1905,6 +1914,7 @@ const filteredEvents = [...events]
   <>
     <MaintenancePanel
       assetId={assetId}
+      focusScheduleId={focusMaintenanceScheduleId}
       onChanged={refreshMaintenanceData}
     />
 
@@ -1988,7 +1998,7 @@ const filteredEvents = [...events]
             <th className="col-time">Date and time</th>
             <th>Entry</th>
             <th>Entry type</th>
-            <th>Assigned rule</th>
+            <th>Technician</th>
             <th>Actions</th>
           </tr>
         </thead>
@@ -2012,10 +2022,7 @@ const filteredEvents = [...events]
                 </td>
 
                 <td>
-                  {entry.assigned_rule ||
-                    entry.rule_name ||
-                    entry.alert_id ||
-                    "—"}
+                  {entry.assigned_technician || "—"}
                 </td>
 
                 <td>
@@ -2147,6 +2154,9 @@ const filteredEvents = [...events]
                 event.rule_name ||
                 event.assigned_rule ||
                 event.rule?.name ||
+                (event.event_type === "maintenance_completed"
+                  ? "Maintenance"
+                  : null) ||
                 (event.rule_id != null
                   ? `Rule #${event.rule_id}`
                   : "Not assigned");
@@ -2510,12 +2520,31 @@ const filteredEvents = [...events]
       </div>
 
       <div>
-        <dt>Assigned rule</dt>
+        <dt>Technician</dt>
+        <dd>{selectedEntry.assigned_technician || "—"}</dd>
+      </div>
+
+      <div>
+        <dt>Priority</dt>
+        <dd>{selectedEntry.priority || "—"}</dd>
+      </div>
+
+      <div>
+        <dt>Actual start</dt>
+        <dd>{selectedEntry.actual_started_at ? formatTime(selectedEntry.actual_started_at) : "—"}</dd>
+      </div>
+
+      <div>
+        <dt>Actual completion</dt>
+        <dd>{selectedEntry.actual_completed_at ? formatTime(selectedEntry.actual_completed_at) : "—"}</dd>
+      </div>
+
+      <div>
+        <dt>Actual duration</dt>
         <dd>
-          {selectedEntry.assigned_rule ||
-            selectedEntry.rule_name ||
-            selectedEntry.alert_id ||
-            "—"}
+          {Number.isFinite(selectedEntry.actual_duration_seconds)
+            ? formatDuration(selectedEntry.actual_duration_seconds)
+            : "—"}
         </dd>
       </div>
 
@@ -2523,6 +2552,31 @@ const filteredEvents = [...events]
         <div>
           <dt>Notes</dt>
           <dd>{selectedEntry.notes}</dd>
+        </div>
+      )}
+
+      {selectedEntry.completion_notes && (
+        <div>
+          <dt>Completion notes</dt>
+          <dd>{selectedEntry.completion_notes}</dd>
+        </div>
+      )}
+
+      {selectedEntry.parts_used && (
+        <div>
+          <dt>Parts used</dt>
+          <dd>{selectedEntry.parts_used}</dd>
+        </div>
+      )}
+
+      {Array.isArray(selectedEntry.checklist) && selectedEntry.checklist.length > 0 && (
+        <div>
+          <dt>Checklist</dt>
+          <dd>
+            {selectedEntry.checklist
+              .map((item) => `${item.completed ? "Complete" : "Incomplete"}: ${item.item}`)
+              .join(", ")}
+          </dd>
         </div>
       )}
 

@@ -1365,6 +1365,7 @@ def frontend_asset_logbook(
         .outerjoin(Alert, Alert.id == MaintenanceRecord.alert_id)
         .outerjoin(MonitoringRule, MonitoringRule.id == Alert.rule_id)
         .where(MaintenanceRecord.asset_id == asset_id)
+        .where(MaintenanceRecord.status == "completed")
         .order_by(MaintenanceRecord.performed_at.desc())
     ).all()
     return [
@@ -1379,6 +1380,48 @@ def frontend_asset_logbook(
             "status": record.status,
             "alert_id": record.alert_id,
             "assigned_rule": rule_name,
+            "assigned_technician": record.assigned_technician or record.performed_by,
+            "priority": record.priority,
+            "completion_notes": record.completion_notes,
+            "parts_used": record.parts_used,
+            "checklist": record.checklist,
+            "actual_started_at": (
+                record.actual_started_at.isoformat()
+                if record.actual_started_at
+                else None
+            ),
+            "actual_completed_at": (
+                record.actual_completed_at.isoformat()
+                if record.actual_completed_at
+                else None
+            ),
+            "actual_duration_seconds": (
+                max(
+                    0,
+                    int(
+                        (
+                            (
+                                record.actual_completed_at.replace(tzinfo=timezone.utc)
+                                if record.actual_completed_at.tzinfo is None
+                                else record.actual_completed_at.astimezone(timezone.utc)
+                            )
+                            -
+                            (
+                                record.actual_started_at.replace(tzinfo=timezone.utc)
+                                if record.actual_started_at.tzinfo is None
+                                else record.actual_started_at.astimezone(timezone.utc)
+                            )
+                        ).total_seconds()
+                    ),
+                )
+                if record.actual_started_at and record.actual_completed_at
+                else None
+            ),
+            "planned_due_date": (
+                record.planned_due_date.isoformat()
+                if record.planned_due_date
+                else None
+            ),
             "planned_start_at": (
                 record.planned_start_at.isoformat()
                 if record.planned_start_at
@@ -1432,6 +1475,8 @@ def frontend_asset_events(
         .outerjoin(Asset, Asset.id == MonitoringEvent.asset_id)
         .outerjoin(MonitoringRule, MonitoringRule.id == MonitoringEvent.rule_id)
         .where(MonitoringEvent.asset_id == asset_id)
+        .where(MonitoringEvent.rule_id.is_not(None))
+        .where(~MonitoringEvent.event_type.like("maintenance_%"))
         .order_by(MonitoringEvent.occurred_at.desc(), MonitoringEvent.id.desc())
         .limit(200)
     ).all()
@@ -1447,6 +1492,7 @@ def frontend_asset_events(
             "rule_id": event.rule_id,
             "rule_name": rule_name,
             "alert_id": event.alert_id,
+            "metadata": event.event_metadata,
         }
         for event, asset_name, rule_name in events
     ]

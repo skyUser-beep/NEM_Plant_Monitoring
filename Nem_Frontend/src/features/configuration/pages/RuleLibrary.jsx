@@ -66,17 +66,20 @@ const FIELDS = [
       values.rule_type === "interval_based",
   },
   { key: "runtime_variable_type", label: "Running signal type", type: "select", default: "boolean", options: [["boolean", "Boolean"]], disabled: true, showWhen: { key: "rule_type", equals: "interval_based" }, hint: "Choose the actual running signal for each asset during assignment." },
-  { key: "boolean_behavior", label: "Boolean rule behavior", type: "select", default: "running_time", options: [["running_time", "Accumulate running time while ON"], ["state", "Check the current ON/OFF state"]], showWhen: (values) => values.rule_type === "parameter_threshold" && values.variable_type === "boolean", hint: "Running-time rules show a Due in countdown like rules created on an asset." },
+  { key: "boolean_behavior", label: "Boolean rule behavior", type: "select", default: "running_time", options: [["running_time", "Accumulate running time while ON"], ["cycle_count", "Count OFF-to-ON cycles"], ["state", "Check the current ON/OFF state"]], showWhen: (values) => values.rule_type === "parameter_threshold" && values.variable_type === "boolean", hint: "Cycle counting increments once for each OFF-to-ON transition." },
   { key: "runtime_warning_hours", label: "Warning after running (hours)", type: "number", required: true, default: 1, showWhen: (values) => values.rule_type === "interval_based" || (values.rule_type === "parameter_threshold" && values.variable_type === "boolean" && values.boolean_behavior === "running_time"), hint: "Runtime accumulates only while the selected Boolean signal is ON." },
   { key: "runtime_warning_2_hours", label: "Higher warning (hours)", type: "number", required: true, default: 1.5, showWhen: (values) => values.rule_type === "interval_based" || (values.rule_type === "parameter_threshold" && values.variable_type === "boolean" && values.boolean_behavior === "running_time") },
   { key: "runtime_alert_hours", label: "Alert after running (hours)", type: "number", required: true, default: 2, showWhen: (values) => values.rule_type === "interval_based" || (values.rule_type === "parameter_threshold" && values.variable_type === "boolean" && values.boolean_behavior === "running_time") },
+  { key: "cycle_warning_threshold_1", label: "Warning at cycle count", type: "number", requiredWhen: (values) => values.rule_type === "parameter_threshold" && values.variable_type === "boolean" && values.boolean_behavior === "cycle_count", placeholder: "e.g. 9000", showWhen: (values) => values.rule_type === "parameter_threshold" && values.variable_type === "boolean" && values.boolean_behavior === "cycle_count" },
+  { key: "cycle_warning_threshold_2", label: "Higher warning at cycle count", type: "number", requiredWhen: (values) => values.rule_type === "parameter_threshold" && values.variable_type === "boolean" && values.boolean_behavior === "cycle_count", placeholder: "e.g. 9500", showWhen: (values) => values.rule_type === "parameter_threshold" && values.variable_type === "boolean" && values.boolean_behavior === "cycle_count" },
+  { key: "cycle_alert_threshold", label: "Alert at cycle count", type: "number", requiredWhen: (values) => values.rule_type === "parameter_threshold" && values.variable_type === "boolean" && values.boolean_behavior === "cycle_count", placeholder: "e.g. 10000", showWhen: (values) => values.rule_type === "parameter_threshold" && values.variable_type === "boolean" && values.boolean_behavior === "cycle_count" },
   { key: "operator", label: "Condition", type: "select", required: true, default: ">=", options: (values) => values.variable_type === "boolean" ? BOOLEAN_COMPARISON_OPTIONS : COMPARISON_OPTIONS, showWhen: (values) => values.rule_type === "parameter_threshold" && (values.variable_type !== "boolean" || values.boolean_behavior === "state") },
   { key: "threshold", label: "Threshold", type: "number", requiredWhen: (values) => values.rule_type === "parameter_threshold" && values.variable_type !== "boolean", showWhen: (values) => values.rule_type === "parameter_threshold" && values.variable_type !== "boolean" },
   { key: "expected_boolean", label: "Boolean value", type: "select", requiredWhen: { key: "rule_type", equals: "parameter_threshold" }, options: [["true", "ON"], ["false", "OFF"]], default: "true", showWhen: (values) => values.rule_type === "parameter_threshold" && values.variable_type === "boolean" && values.boolean_behavior === "state" },
   { key: "severity", label: "Severity", type: "select", required: true, default: "warning", options: [["warning", "Warning"], ["alert", "Alert"]] },
   { key: "is_enabled", label: "Rule status", type: "select", required: true, default: "true", options: [["true", "Available"], ["false", "Disabled"]] },
-  { key: "evaluation_interval_seconds", label: "Check interval (seconds)", type: "number", showWhen: (values) => values.rule_type === "parameter_threshold" && (values.variable_type !== "boolean" || values.boolean_behavior !== "running_time") },
-  { key: "stale_after_seconds", label: "Stale reading timeout (seconds)", type: "number", showWhen: (values) => values.rule_type === "parameter_threshold" && (values.variable_type !== "boolean" || values.boolean_behavior !== "running_time") },
+  { key: "evaluation_interval_seconds", label: "Check interval (seconds)", type: "number", showWhen: (values) => values.rule_type === "parameter_threshold" && (values.variable_type !== "boolean" || values.boolean_behavior === "state") },
+  { key: "stale_after_seconds", label: "Stale reading timeout (seconds)", type: "number", showWhen: (values) => values.rule_type === "parameter_threshold" && (values.variable_type !== "boolean" || values.boolean_behavior === "state") },
 ];
 
 const LEGACY_EDIT_FIELDS = [
@@ -118,6 +121,14 @@ function templateSummary(template) {
     return `Running Boolean · warnings at ${formatInterval(parameters.warning_thresholds_seconds[0])} / ${formatInterval(parameters.warning_thresholds_seconds[1])} · alert at ${formatInterval(parameters.alert_threshold_seconds)}`;
   }
   if (
+    template.rule_type === "boolean_count_threshold" &&
+    Array.isArray(parameters.warning_thresholds) &&
+    parameters.warning_thresholds.length === 2 &&
+    parameters.alert_threshold != null
+  ) {
+    return `Cycle count · warnings at ${parameters.warning_thresholds[0]} / ${parameters.warning_thresholds[1]} · alert at ${parameters.alert_threshold}`;
+  }
+  if (
     template.rule_type === "parameter_threshold" &&
     typeof parameters.expected_value === "boolean" &&
     parameters.evaluation_mode === "state"
@@ -151,13 +162,16 @@ const displayType = (rule) =>
     ? "Interval based"
     : rule.rule_type === "runtime_duration"
       ? "Interval based"
+    : rule.rule_type === "boolean_count_threshold"
+      ? "Parameter threshold"
     : RULE_TYPES.find(([value]) => value === rule.rule_type)?.[1] ||
       rule.rule_type?.replaceAll("_", " ") ||
       "Monitoring rule";
 
 const supportsCurrentRuleEditor = (rule) =>
   rule.rule_type === "parameter_threshold" ||
-  rule.rule_type === "runtime_duration";
+  rule.rule_type === "runtime_duration" ||
+  rule.rule_type === "boolean_count_threshold";
 
 function legacyTemplatePayload(values, template) {
   return {
@@ -198,6 +212,7 @@ function initialTemplate(template) {
       Number.isInteger(intervalSeconds / seconds)
     )?.[0] || "seconds";
   const isRuntime = template.rule_type === "runtime_duration";
+  const isCycleCount = template.rule_type === "boolean_count_threshold";
   const isBooleanRunningTemplate =
     template.rule_type === "parameter_threshold" &&
     required.includes("boolean") &&
@@ -205,9 +220,17 @@ function initialTemplate(template) {
     params.evaluation_mode !== "state";
   return {
     ...template,
-    rule_type: isInterval || isRuntime ? "interval_based" : template.rule_type,
+    rule_type: isInterval || isRuntime
+      ? "interval_based"
+      : isCycleCount
+        ? "parameter_threshold"
+        : template.rule_type,
     variable_type: variableType,
-    boolean_behavior: isBooleanRunningTemplate ? "running_time" : "state",
+    boolean_behavior: isCycleCount
+      ? "cycle_count"
+      : isBooleanRunningTemplate
+        ? "running_time"
+        : "state",
     runtime_warning_hours: isRuntime
       ? Number(params.warning_thresholds_seconds?.[0] || 0) / 3600
       : isBooleanRunningTemplate
@@ -223,6 +246,15 @@ function initialTemplate(template) {
       : isBooleanRunningTemplate
         ? 2
         : "",
+    cycle_warning_threshold_1: isCycleCount
+      ? params.warning_thresholds?.[0] ?? ""
+      : "",
+    cycle_warning_threshold_2: isCycleCount
+      ? params.warning_thresholds?.[1] ?? ""
+      : "",
+    cycle_alert_threshold: isCycleCount
+      ? params.alert_threshold ?? ""
+      : "",
     expected_boolean: String(params.expected_value ?? true),
     threshold: template.threshold ?? "",
     operator: template.operator || (variableType === "boolean" ? "==" : ">="),
@@ -236,8 +268,16 @@ function templatePayload(values) {
     values.rule_type === "parameter_threshold" &&
     values.variable_type === "boolean" &&
     values.boolean_behavior === "running_time";
+  const isBooleanCycleCount =
+    values.rule_type === "parameter_threshold" &&
+    values.variable_type === "boolean" &&
+    values.boolean_behavior === "cycle_count";
   const isInterval = values.rule_type === "interval_based" || isBooleanRunning;
-  const type = isInterval ? "runtime_duration" : values.rule_type;
+  const type = isBooleanCycleCount
+    ? "boolean_count_threshold"
+    : isInterval
+      ? "runtime_duration"
+      : values.rule_type;
   let required_variable_types = null;
   let parameters = null;
   let operator = null;
@@ -276,6 +316,27 @@ function templatePayload(values) {
     } else {
       threshold = values.threshold;
     }
+  } else if (type === "boolean_count_threshold") {
+    const warning1 = Number(values.cycle_warning_threshold_1);
+    const warning2 = Number(values.cycle_warning_threshold_2);
+    const alert = Number(values.cycle_alert_threshold);
+    if (
+      ![warning1, warning2, alert].every(
+        (value) => Number.isSafeInteger(value) && value > 0
+      ) ||
+      warning1 >= warning2 ||
+      warning2 >= alert
+    ) {
+      throw new Error(
+        "Cycle thresholds must be positive whole numbers in increasing order."
+      );
+    }
+    required_variable_types = ["boolean"];
+    variable_key = values.variable_key || null;
+    parameters = {
+      warning_thresholds: [warning1, warning2],
+      alert_threshold: alert,
+    };
   }
   return {
     name: values.name,
