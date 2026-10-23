@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   Activity,
   Copy,
@@ -32,7 +32,7 @@ const BOOLEAN_COMPARISON_OPTIONS = [
   ["!=", "Is not"],
 ];
 
-const FIELDS = [
+export const FIELDS = [
   { key: "name", label: "Rule name", required: true, placeholder: "e.g. High motor temperature" },
   { key: "description", label: "Description", type: "textarea" },
   { key: "rule_type", label: "Rule type", type: "select", required: true, default: "interval_based", options: RULE_TYPES },
@@ -82,7 +82,7 @@ const FIELDS = [
   { key: "stale_after_seconds", label: "Stale reading timeout (seconds)", type: "number", showWhen: (values) => values.rule_type === "parameter_threshold" && (values.variable_type !== "boolean" || values.boolean_behavior === "state") },
 ];
 
-const LEGACY_EDIT_FIELDS = [
+export const LEGACY_EDIT_FIELDS = [
   { key: "name", label: "Rule name", required: true },
   { key: "description", label: "Description", type: "textarea" },
   { key: "severity", label: "Severity", type: "select", required: true, options: [["warning", "Warning"], ["alert", "Alert"]] },
@@ -156,7 +156,7 @@ const needsRuntimeThresholdConfiguration = (template) =>
   template.parameters?.expected_value === true &&
   template.parameters?.evaluation_mode !== "state";
 
-const displayType = (rule) =>
+export const displayType = (rule) =>
   rule.rule_type === "duration" &&
   rule.parameters?.condition === "interval_elapsed"
     ? "Interval based"
@@ -168,12 +168,12 @@ const displayType = (rule) =>
       rule.rule_type?.replaceAll("_", " ") ||
       "Monitoring rule";
 
-const supportsCurrentRuleEditor = (rule) =>
+export const supportsCurrentRuleEditor = (rule) =>
   rule.rule_type === "parameter_threshold" ||
   rule.rule_type === "runtime_duration" ||
   rule.rule_type === "boolean_count_threshold";
 
-function legacyTemplatePayload(values, template) {
+export function legacyTemplatePayload(values, template) {
   return {
     name: values.name,
     description: values.description || null,
@@ -190,7 +190,7 @@ function legacyTemplatePayload(values, template) {
   };
 }
 
-function initialTemplate(template) {
+export function initialTemplate(template) {
   if (!template) return {};
   const params = template.parameters || {};
   const required = template.required_variable_types || [];
@@ -263,7 +263,7 @@ function initialTemplate(template) {
   };
 }
 
-function templatePayload(values) {
+export function templatePayload(values) {
   const isBooleanRunning =
     values.rule_type === "parameter_threshold" &&
     values.variable_type === "boolean" &&
@@ -499,6 +499,8 @@ function AssignmentModal({ template, onClose, onComplete }) {
 
 export default function RuleLibrary() {
   const navigate = useNavigate();
+  const location = useLocation();
+
   const [templates, setTemplates] = useState(null);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
@@ -511,6 +513,18 @@ export default function RuleLibrary() {
     const result = await api.get("/rule-templates");
     setTemplates(Array.isArray(result) ? result : []);
   };
+
+  useEffect(() => {
+  if (location.state?.openCreate) {
+    setEditing(null);
+    setModalOpen(true);
+
+    navigate(location.pathname, {
+      replace: true,
+      state: {},
+    });
+  }
+}, [location.pathname, location.state, navigate]);
 
   useEffect(() => {
     let alive = true;

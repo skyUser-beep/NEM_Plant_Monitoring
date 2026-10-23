@@ -1,8 +1,8 @@
 
 import React, { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../../../services/api.js";
 import "./CreateMaintenanceSchedulePage.css";
+import { useNavigate, useParams, useLocation } from "react-router-dom";
 
 const TYPES = [
   "preventive",
@@ -59,6 +59,8 @@ export default function CreateMaintenanceSchedulePage() {
   const { id, scheduleId } = useParams();
   const isEdit = Boolean(scheduleId);
   const navigate = useNavigate();
+  const location = useLocation();
+  const maintenanceRecord = location.state?.maintenanceRecord;
 
   const [form, setForm] = useState({
     title: "",
@@ -87,7 +89,6 @@ export default function CreateMaintenanceSchedulePage() {
   const [instructionsError, setInstructionsError] = useState("");
   const [instructionSearch, setInstructionSearch] = useState("");
 
-  // Load existing schedule when editing.
   useEffect(() => {
     if (!isEdit || !scheduleId) {
       setLoading(false);
@@ -101,59 +102,75 @@ export default function CreateMaintenanceSchedulePage() {
       setError("");
 
       try {
-        const response = await api.get(
-          `/maintenance/schedules/${scheduleId}`
-        );
+        let record;
 
-        const data = response?.data ?? response;
-        const schedule = data?.schedule ?? data;
+        if (maintenanceRecord) {
+          // Regular maintenance record passed from MaintenancePanel.
+          record = maintenanceRecord;
+        } else {
+          // Existing schedule edit: retain the original API flow.
+          const response = await api.get(
+            `/maintenance/schedules/${scheduleId}`
+          );
+
+          const data = response?.data ?? response;
+          record = data?.schedule ?? data;
+        }
 
         if (
-          !schedule ||
-          typeof schedule !== "object" ||
-          Array.isArray(schedule) ||
-          schedule.title == null
+          !record ||
+          typeof record !== "object" ||
+          Array.isArray(record)
         ) {
-          throw new Error(
-            "Invalid schedule data returned by the server."
-          );
+          throw new Error("Invalid maintenance data returned.");
         }
 
         if (cancelled) return;
 
+        const startDate =
+          record.schedule_start_date ||
+          record.planned_start_at ||
+          record.start_date ||
+          todayDateInput();
+
+        const dueDate =
+          record.first_due_date ||
+          record.planned_end_at ||
+          record.next_due_at ||
+          "";
+
         setForm({
-          title: schedule.title ?? "",
+          title: record.title ?? "",
           maintenance_type:
-            schedule.maintenance_type ?? "preventive",
-          priority: schedule.priority ?? "medium",
+            record.maintenance_type ?? "preventive",
+          priority: record.priority ?? "medium",
           assigned_technician:
-            schedule.assigned_technician ?? "",
-          description: schedule.description ?? "",
-          schedule_start_date: schedule.schedule_start_date
-            ? String(schedule.schedule_start_date).slice(0, 10)
-            : todayDateInput(),
-          first_due_date: schedule.first_due_date
-            ? String(schedule.first_due_date).slice(0, 10)
+            record.assigned_technician ?? "",
+          description:
+            record.description ?? record.notes ?? "",
+          schedule_start_date: String(startDate).slice(0, 10),
+          first_due_date: dueDate
+            ? String(dueDate).slice(0, 10)
             : "",
           recurrence_enabled:
-            schedule.recurrence_enabled == null
-              ? true
-              : Boolean(schedule.recurrence_enabled),
+            record.recurrence_enabled == null
+              ? !maintenanceRecord
+              : Boolean(record.recurrence_enabled),
           recurrence_interval: String(
-            schedule.recurrence_interval ?? 1
+            record.recurrence_interval ?? 1
           ),
           recurrence_unit:
-            schedule.recurrence_unit ?? "months",
+            record.recurrence_unit ?? "months",
         });
         setSelectedDocuments(schedule.instruction_documents || []);
       } catch (err) {
-        console.error("Failed to load schedule:", err);
+        console.error("Failed to load maintenance:", err);
 
         if (!cancelled) {
           setError(
             getErrorMessage(
               err,
-              "Could not load maintenance schedule."
+              "Could not load maintenance details."
             )
           );
         }
@@ -169,7 +186,8 @@ export default function CreateMaintenanceSchedulePage() {
     return () => {
       cancelled = true;
     };
-  }, [isEdit, scheduleId]);
+  }, [isEdit, scheduleId, maintenanceRecord]);
+
 
   const updateField = (event) => {
     const { name, value, checked, type } = event.target;
@@ -296,14 +314,28 @@ export default function CreateMaintenanceSchedulePage() {
     setBusy(true);
 
     try {
-      if (isEdit) {
-        await api.patch(
-          `/maintenance/schedules/${scheduleId}`,
-          payload
-        );
-      } else {
-        await api.post("/maintenance/schedules", payload);
-      }
+      if (isEdit && maintenanceRecord) {
+  await api.patch(
+    `/maintenance/${maintenanceRecord.id}`,
+    {
+      title: form.title.trim(),
+      maintenance_type: form.maintenance_type,
+      priority: form.priority,
+      assigned_technician:
+        form.assigned_technician.trim() || null,
+      notes: form.description.trim() || null,
+      planned_start_at: form.schedule_start_date,
+      planned_end_at: form.first_due_date,
+    }
+  );
+} else if (isEdit) {
+  await api.patch(
+    `/maintenance/schedules/${scheduleId}`,
+    payload
+  );
+} else {
+  await api.post("/maintenance/schedules", payload);
+}
 
       navigate(`/assets/${id}`, {
         state: {
@@ -355,7 +387,7 @@ export default function CreateMaintenanceSchedulePage() {
           onClick={goToMaintenanceLog}
           disabled={busy}
         >
-          Back to Maintenance log
+          ← Back to Maintenance log
         </button>
 
         <div>
@@ -364,10 +396,8 @@ export default function CreateMaintenanceSchedulePage() {
           </p>
 
           <h1>
-            {isEdit
-              ? "Edit maintenance schedule"
-              : "Add maintenance schedule"}
-          </h1>
+            {isEdit ? "Edit maintenance" : "Add maintenance"}
+            </h1>
 
           <p className="create-schedule-subtitle">
             Configure the maintenance plan, first due date and
@@ -639,12 +669,12 @@ export default function CreateMaintenanceSchedulePage() {
                 disabled={busy}
               >
                 {busy
-                  ? isEdit
-                    ? "Updating schedule..."
-                    : "Creating schedule..."
-                  : isEdit
-                    ? "Update schedule"
-                    : "Create schedule"}
+                ? isEdit
+                ? "Updating maintenance..."
+                : "Creating maintenance..."
+                : isEdit
+                ? "Save changes"
+                : "Add maintenance"}
               </button>
             </div>
           </>

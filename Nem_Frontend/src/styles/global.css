@@ -903,3 +903,65 @@ html[data-theme="light"] .copy-rules-modal textarea {
 .asset-page .machine-strip.status-summary .machine-fig > span {
   color: var(--muted);
 }
+
+
+.config-action-icons {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.config-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 1px solid #35414d;
+  border-radius: 7px;
+  background: transparent;
+  color: #cbd5e1;
+  cursor: pointer;
+  transition:
+    background 0.18s ease,
+    color 0.18s ease,
+    border-color 0.18s ease;
+}
+
+.config-icon-btn:hover:not(:disabled) {
+  background: #202a34;
+  border-color: #64748b;
+}
+
+.config-icon-btn.edit:hover:not(:disabled),
+.config-icon-btn.add:hover:not(:disabled) {
+  color: #60a5fa;
+  border-color: #3b82f6;
+}
+
+.config-icon-btn.toggle:hover:not(:disabled) {
+  color: #fbbf24;
+  border-color: #d97706;
+}
+
+.config-icon-btn.duplicate:hover:not(:disabled) {
+  color: #c4b5fd;
+  border-color: #8b5cf6;
+}
+
+.config-icon-btn.delete {
+  color: #f87171;
+}
+
+.config-icon-btn.delete:hover:not(:disabled) {
+  color: #fca5a5;
+  background: #351c20;
+  border-color: #ef4444;
+}
+
+.config-icon-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

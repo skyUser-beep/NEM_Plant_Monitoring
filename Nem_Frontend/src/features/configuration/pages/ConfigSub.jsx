@@ -1,6 +1,15 @@
-
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
+import {
+  Link,
+  useLocation,
+  useNavigate,
+  useParams,
+} from "react-router-dom";
 import { api } from "../../../services/api.js";
 import {
   createLiveUpdateScheduler,
@@ -8,7 +17,17 @@ import {
 } from "../../../services/liveUpdates.js";
 import { conditionText } from "../../../utils/format.js";
 import { CreateModal, EmptyState } from "../../../components/common/UI.jsx";
-import { BackIcon, PlusCircle } from "../../../components/common/Icons.jsx";
+import {
+  BackIcon,
+  PlusCircle,
+} from "../../../components/common/Icons.jsx";
+import {
+  Pencil,
+  Trash2,
+  Copy,
+  Power,
+} from "lucide-react";
+import ReusableRuleModal from "./ReusableRuleModal.jsx";
 
 const DOC_TYPES = [
   ["Instruction", "Instruction"],
@@ -165,7 +184,11 @@ function fieldsFor(sub, variables) {
 
 function cell(key, row, variableNames) {
   if (key === "condition") {
-    const text = conditionText(row, variableNames.get(row.variable_id));
+    const text = conditionText(
+      row,
+      variableNames.get(row.variable_id)
+    );
+
     return text || <span className="muted">-</span>;
   }
 
@@ -181,7 +204,9 @@ function cell(key, row, variableNames) {
         {files.map((file, index) => (
           <React.Fragment key={file.id}>
             {index > 0 ? ", " : ""}
-            <Link to={`/configuration/documents/${row.id}/files/${file.id}/view`}>
+            <Link
+              to={`/configuration/documents/${row.id}/files/${file.id}/view`}
+            >
               {file.name}
             </Link>
           </React.Fragment>
@@ -192,18 +217,28 @@ function cell(key, row, variableNames) {
 
   const value = row[key];
 
-  if (value === undefined || value === null || value === "") {
+  if (
+    value === undefined ||
+    value === null ||
+    value === ""
+  ) {
     return <span className="muted">-</span>;
   }
 
   if (key === "labels") {
-    return Array.isArray(value) && value.length
-      ? value.join(", ")
-      : <span className="muted">-</span>;
+    return Array.isArray(value) && value.length ? (
+      value.join(", ")
+    ) : (
+      <span className="muted">-</span>
+    );
   }
 
   if (key === "severity") {
-    return <span className={"badge " + value}>{value}</span>;
+    return (
+      <span className={"badge " + value}>
+        {value}
+      </span>
+    );
   }
 
   if (key === "state") {
@@ -218,10 +253,14 @@ function cell(key, row, variableNames) {
 }
 
 function ImportPage() {
-  const [msg, setMsg] = useState({ text: "", error: false });
+  const [msg, setMsg] = useState({
+    text: "",
+    error: false,
+  });
 
   const onFile = async (event) => {
     const file = event.target.files?.[0];
+
     if (!file) return;
 
     try {
@@ -238,7 +277,10 @@ function ImportPage() {
           ? "That file is not valid JSON."
           : error.message;
 
-      setMsg({ text: `Import failed: ${text}`, error: true });
+      setMsg({
+        text: `Import failed: ${text}`,
+        error: true,
+      });
     } finally {
       event.target.value = "";
     }
@@ -247,14 +289,25 @@ function ImportPage() {
   return (
     <div className="panel">
       <p className="muted">
-        Choose a JSON file with a <code>collections</code> list (name,
-        description) and a <code>rules</code> list. Each rule needs the same
-        fields as a rule created in the app, including its asset and variable
-        IDs.
+        Choose a JSON file with a <code>collections</code> list
+        (name, description) and a <code>rules</code> list.
+        Each rule needs the same fields as a rule created in
+        the app, including its asset and variable IDs.
       </p>
-      <input type="file" accept=".json,application/json" onChange={onFile} />
+
+      <input
+        type="file"
+        accept=".json,application/json"
+        onChange={onFile}
+      />
+
       {msg.text && (
-        <p className={"notice" + (msg.error ? " error" : "")} role="status">
+        <p
+          className={
+            "notice" + (msg.error ? " error" : "")
+          }
+          role="status"
+        >
           {msg.text}
         </p>
       )}
@@ -265,20 +318,19 @@ function ImportPage() {
 export default function ConfigSub() {
   const { sub } = useParams();
   const nav = useNavigate();
+  const location = useLocation();
   const cfg = CRUD[sub];
 
   const [rows, setRows] = useState(null);
   const [variables, setVariables] = useState([]);
   const [open, setOpen] = useState(false);
   const [editingRule, setEditingRule] = useState(null);
-  const [msg, setMsg] = useState({ text: "", error: false });
+  const [msg, setMsg] = useState({
+    text: "",
+    error: false,
+  });
+  const [activeCollection, setActiveCollection] = useState(null);
   const [busyRuleId, setBusyRuleId] = useState(null);
-
-  const [instructionPickerOpen, setInstructionPickerOpen] = useState(false);
-  const [instructions, setInstructions] = useState([]);
-  const [instructionsLoading, setInstructionsLoading] = useState(false);
-  const [instructionsError, setInstructionsError] = useState("");
-  const [instructionSearch, setInstructionSearch] = useState("");
 
   const [search, setSearch] = useState("");
   const [severityFilter, setSeverityFilter] = useState("all");
@@ -291,18 +343,25 @@ export default function ConfigSub() {
     if (!cfg) return;
 
     if (sub === "rules") {
-      const [rules, currentAssets, statuses] = await Promise.all([
-        api.getAll("/rules"),
-        api.getAll("/assets"),
-        api.getAll("/monitoring/status", 500),
-      ]);
+      const [rules, currentAssets, statuses] =
+        await Promise.all([
+          api.getAll("/rules"),
+          api.getAll("/assets"),
+          api.getAll("/monitoring/status", 500),
+        ]);
 
       const assetNames = new Map(
-        currentAssets.map((asset) => [asset.id, asset.name])
+        currentAssets.map((asset) => [
+          asset.id,
+          asset.name,
+        ])
       );
 
       const stateByRule = new Map(
-        statuses.map((status) => [status.rule_id, status.status])
+        statuses.map((status) => [
+          status.rule_id,
+          status.status,
+        ])
       );
 
       setRows(
@@ -312,8 +371,11 @@ export default function ConfigSub() {
           return {
             ...rule,
             asset_name:
-              assetNames.get(rule.target_asset_id) || "Unassigned",
-            state: rule.is_enabled ? "activated" : "not_activated",
+              assetNames.get(rule.target_asset_id) ||
+              "Unassigned",
+            state: rule.is_enabled
+              ? "activated"
+              : "not_activated",
             status:
               status === "normal"
                 ? "ok"
@@ -326,18 +388,27 @@ export default function ConfigSub() {
     }
 
     const items = await api.get(`/${cfg.endpoint}`);
+
     setRows(Array.isArray(items) ? items : []);
   }, [cfg, sub]);
 
   const loadVariables = useCallback(async () => {
     if (sub !== "rules") return;
+
     const assets = await api.getAll("/assets");
+
     const perAsset = await Promise.all(
       assets.map((asset) =>
-        api.getAll(`/assets/${asset.id}/variables?is_active=true`)
+        api.getAll(
+          `/assets/${asset.id}/variables?is_active=true`
+        )
       )
     );
-    const names = new Map(assets.map((asset) => [asset.id, asset.name]));
+
+    const names = new Map(
+      assets.map((asset) => [asset.id, asset.name])
+    );
+
     setVariables(
       perAsset
         .flat()
@@ -347,7 +418,8 @@ export default function ConfigSub() {
         .map((variable) => ({
           ...variable,
           asset_name:
-            names.get(variable.asset_id) || `Asset ${variable.asset_id}`,
+            names.get(variable.asset_id) ||
+            `Asset ${variable.asset_id}`,
         }))
     );
   }, [sub]);
@@ -358,7 +430,10 @@ export default function ConfigSub() {
         try {
           await load();
         } catch (error) {
-          setMsg({ text: error.message, error: true });
+          setMsg({
+            text: error.message,
+            error: true,
+          });
         }
       }, 250),
     [load]
@@ -375,15 +450,23 @@ export default function ConfigSub() {
 
     load().catch((error) => {
       if (!alive) return;
+
       setRows([]);
-      setMsg({ text: error.message, error: true });
+      setMsg({
+        text: error.message,
+        error: true,
+      });
     });
 
     if (sub === "rules") {
-      loadVariables()
-        .catch((error) => {
-          if (alive) setMsg({ text: error.message, error: true });
-        });
+      loadVariables().catch((error) => {
+        if (alive) {
+          setMsg({
+            text: error.message,
+            error: true,
+          });
+        }
+      });
     } else {
       setVariables([]);
     }
@@ -395,26 +478,46 @@ export default function ConfigSub() {
 
   useEffect(() => {
     if (sub !== "rules") return undefined;
+
     return subscribeLiveUpdates((update) => {
       if (update.resync_required) {
         rulesScheduler();
+
         loadVariables().catch((error) =>
-          setMsg({ text: error.message, error: true })
+          setMsg({
+            text: error.message,
+            error: true,
+          })
         );
+
         return;
       }
-      const changedTables = new Set(update.changed_tables || []);
+
+      const changedTables = new Set(
+        update.changed_tables || []
+      );
+
       if (
-        ["nem_monitoring_rules", "nem_rule_states"].some((table) =>
+        [
+          "nem_monitoring_rules",
+          "nem_rule_states",
+        ].some((table) => changedTables.has(table))
+      ) {
+        rulesScheduler();
+      }
+
+      if (
+        ["assets", "variables"].some((table) =>
           changedTables.has(table)
         )
       ) {
         rulesScheduler();
-      }
-      if (["assets", "variables"].some((table) => changedTables.has(table))) {
-        rulesScheduler();
+
         loadVariables().catch((error) =>
-          setMsg({ text: error.message, error: true })
+          setMsg({
+            text: error.message,
+            error: true,
+          })
         );
       }
     });
@@ -434,7 +537,13 @@ export default function ConfigSub() {
   );
 
   const variableNames = useMemo(
-    () => new Map(variables.map((variable) => [variable.id, variable.name])),
+    () =>
+      new Map(
+        variables.map((variable) => [
+          variable.id,
+          variable.name,
+        ])
+      ),
     [variables]
   );
 
@@ -444,7 +553,9 @@ export default function ConfigSub() {
   );
 
   const visibleRows = useMemo(() => {
-    if (sub !== "rules" || !Array.isArray(rows)) return rows || [];
+    if (sub !== "rules" || !Array.isArray(rows)) {
+      return rows || [];
+    }
 
     const query = search.trim().toLowerCase();
 
@@ -458,10 +569,15 @@ export default function ConfigSub() {
           row.severity,
           row.rule_type,
           row.status,
-        ].some((value) => String(value ?? "").toLowerCase().includes(query));
+        ].some((value) =>
+          String(value ?? "")
+            .toLowerCase()
+            .includes(query)
+        );
 
       const matchesSeverity =
-        severityFilter === "all" || row.severity === severityFilter;
+        severityFilter === "all" ||
+        row.severity === severityFilter;
 
       const matchesState =
         stateFilter === "all" ||
@@ -485,18 +601,39 @@ export default function ConfigSub() {
       if (left == null) left = "";
       if (right == null) right = "";
 
-      if (typeof left === "number" && typeof right === "number") {
+      if (
+        typeof left === "number" &&
+        typeof right === "number"
+      ) {
         return (left - right) * direction;
       }
 
-      return String(left).localeCompare(String(right), undefined, {
-        numeric: true,
-        sensitivity: "base",
-      }) * direction;
+      return (
+        String(left).localeCompare(
+          String(right),
+          undefined,
+          {
+            numeric: true,
+            sensitivity: "base",
+          }
+        ) * direction
+      );
     });
-  }, [rows, sub, search, severityFilter, stateFilter, sortKey, sortDirection]);
+  }, [
+    rows,
+    sub,
+    search,
+    severityFilter,
+    stateFilter,
+    sortKey,
+    sortDirection,
+  ]);
 
-  const totalPages = Math.max(1, Math.ceil(visibleRows.length / PAGE_SIZE));
+  const totalPages = Math.max(
+    1,
+    Math.ceil(visibleRows.length / PAGE_SIZE)
+  );
+
   const currentPage = Math.min(page, totalPages);
 
   const pagedRows =
@@ -509,11 +646,14 @@ export default function ConfigSub() {
 
   const changeSort = (key) => {
     if (sortKey === key) {
-      setSortDirection((direction) => direction === "asc" ? "desc" : "asc");
+      setSortDirection((direction) =>
+        direction === "asc" ? "desc" : "asc"
+      );
     } else {
       setSortKey(key);
       setSortDirection("asc");
     }
+
     setPage(1);
   };
 
@@ -551,10 +691,15 @@ export default function ConfigSub() {
 
       if (files.length) {
         const form = new FormData();
+
         form.append("title", values.title);
         form.append("kind", values.kind);
         form.append("description", values.description || "");
-        files.forEach((file) => form.append("files", file));
+
+        files.forEach((file) =>
+          form.append("files", file)
+        );
+
         await api.postForm("/documents/with-files", form);
       } else {
         await api.post("/documents", {
@@ -569,7 +714,11 @@ export default function ConfigSub() {
 
     setOpen(false);
     setEditingRule(null);
-    setMsg({ text: `${cfg.noun} created.`, error: false });
+    setMsg({
+      text: `${cfg.noun} created.`,
+      error: false,
+    });
+
     await load();
   };
 
@@ -606,14 +755,12 @@ export default function ConfigSub() {
 
     setOpen(false);
     setEditingRule(null);
-    setMsg({ text: "Rule updated successfully.", error: false });
-    await load();
-  };
+    setMsg({
+      text: "Rule updated successfully.",
+      error: false,
+    });
 
-  const startEdit = (rule) => {
-    setEditingRule(rule);
-    setOpen(true);
-    setMsg({ text: "", error: false });
+    await load();
   };
 
   const duplicate = async (rule) => {
@@ -638,19 +785,30 @@ export default function ConfigSub() {
         parameters: rule.parameters,
         severity: rule.severity,
         is_enabled: false,
-        evaluation_interval_seconds: rule.evaluation_interval_seconds,
+        evaluation_interval_seconds:
+          rule.evaluation_interval_seconds,
         stale_after_seconds: rule.stale_after_seconds,
       };
 
       Object.keys(payload).forEach((key) => {
-        if (payload[key] === undefined) delete payload[key];
+        if (payload[key] === undefined) {
+          delete payload[key];
+        }
       });
 
       await api.post("/rules", payload);
-      setMsg({ text: "Duplicate rule created (disabled).", error: false });
+
+      setMsg({
+        text: "Duplicate rule created (disabled).",
+        error: false,
+      });
+
       await load();
     } catch (error) {
-      setMsg({ text: error.message, error: true });
+      setMsg({
+        text: error.message,
+        error: true,
+      });
     } finally {
       setBusyRuleId(null);
     }
@@ -666,13 +824,18 @@ export default function ConfigSub() {
       });
 
       setMsg({
-        text: `Rule ${rule.is_enabled ? "disabled" : "enabled"} successfully.`,
+        text: `Rule ${
+          rule.is_enabled ? "disabled" : "enabled"
+        } successfully.`,
         error: false,
       });
 
       await load();
     } catch (error) {
-      setMsg({ text: error.message, error: true });
+      setMsg({
+        text: error.message,
+        error: true,
+      });
     } finally {
       setBusyRuleId(null);
     }
@@ -681,30 +844,38 @@ export default function ConfigSub() {
   const remove = async (row) => {
     const isRule = sub === "rules";
 
-    if (
-      !window.confirm(
-        isRule
-          ? `Delete rule "${row.name}"? This action may be rejected if the rule has alert history.`
-          : `Delete this ${cfg.noun.toLowerCase()}?`
-      )
-    ) {
-      return;
-    }
+    const confirmed = window.confirm(
+      isRule
+        ? `Delete rule "${row.name}"? This action may be rejected if the rule has alert history.`
+        : `Delete this ${cfg.noun.toLowerCase()}?`
+    );
+
+    if (!confirmed) return;
 
     setBusyRuleId(row.id);
     setMsg({ text: "", error: false });
 
     try {
       if (isRule && row.is_enabled) {
-        await api.patch(`/rules/${row.id}`, { is_enabled: false });
+        await api.patch(`/rules/${row.id}`, {
+          is_enabled: false,
+        });
       }
 
       await api.del(`/${cfg.endpoint}/${row.id}`);
 
-      setMsg({ text: `${cfg.noun} deleted.`, error: false });
+      setMsg({
+        text: `${cfg.noun} deleted.`,
+        error: false,
+      });
+
       await load();
     } catch (error) {
-      setMsg({ text: error.message, error: true });
+      setMsg({
+        text: error.message,
+        error: true,
+      });
+
       if (isRule) {
         await load().catch(() => {});
       }
@@ -715,17 +886,28 @@ export default function ConfigSub() {
 
   const auditText = (value) => {
     if (!value) return "-";
+
     const date = new Date(value);
-    return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
+
+    return Number.isNaN(date.getTime())
+      ? String(value)
+      : date.toLocaleString();
   };
 
   if (!cfg) {
     return (
       <div>
-        <button className="link-btn" onClick={() => nav("/configuration")}>
+        <button
+          className="link-btn"
+          onClick={() => nav("/configuration")}
+        >
           <BackIcon size={14} /> Back
         </button>
-        <h1 className="page-title">Import configuration</h1>
+
+        <h1 className="page-title">
+          Import configuration
+        </h1>
+
         <ImportPage />
       </div>
     );
@@ -733,61 +915,64 @@ export default function ConfigSub() {
 
   return (
     <div>
-      <button className="link-btn" onClick={() => nav("/configuration")}>
+      <button
+        className="link-btn"
+        onClick={() => nav("/configuration")}
+      >
         <BackIcon size={14} /> Back
       </button>
 
-    
-<div className="page-head">
-  <h1 className="page-title">{cfg.title}</h1>
+      <div className="page-head">
+        <h1 className="page-title">{cfg.title}</h1>
 
-  <div
-    style={{
-      display: "flex",
-      flexWrap: "wrap",
-      gap: 10,
-      alignItems: "center",
-    }}
-  >
-    {sub === "documents" && (
-      <button
-        type="button"
-        className="btn-secondary"
-        onClick={() =>
-          nav("/configuration/instructions/new")
-        }
-      >
-        <PlusCircle size={17} />
-        Create New Instruction
-      </button>
-    )}
+        <div
+          style={{
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 10,
+            alignItems: "center",
+          }}
+        >
+          {sub === "documents" && (
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() =>
+                nav("/configuration/instructions/new")
+              }
+            >
+              <PlusCircle size={17} />
+              Create New Instruction
+            </button>
+          )}
 
-    <button
-      type="button"
-      className="btn-primary"
-      onClick={() => {
-        setEditingRule(null);
-        setMsg({ text: "", error: false });
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={() => {
+              setEditingRule(null);
+              setMsg({ text: "", error: false });
 
-        if (sub === "documents") {
-          nav("/configuration/documents/new");
-          return;
-        }
+              if (sub === "documents") {
+                nav("/configuration/documents/new");
+                return;
+              }
 
-        setOpen(true);
-      }}
-    >
-      <PlusCircle size={17} />
-      {cfg.button}
-    </button>
-  </div>
-</div>
-
+              setOpen(true);
+            }}
+          >
+            <PlusCircle size={17} />
+            {cfg.button}
+          </button>
+        </div>
+      </div>
 
       <div className="panel">
         {msg.text && (
           <p
-            className={"notice flush" + (msg.error ? " error" : "")}
+            className={
+              "notice flush" + (msg.error ? " error" : "")
+            }
             role="status"
           >
             {msg.text}
@@ -795,7 +980,15 @@ export default function ConfigSub() {
         )}
 
         {sub === "rules" && (
-          <div className="rule-toolbar" style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 16 }}>
+          <div
+            className="rule-toolbar"
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 10,
+              marginBottom: 16,
+            }}
+          >
             <input
               aria-label="Search monitoring rules"
               placeholder="Search name, machine, type..."
@@ -804,7 +997,10 @@ export default function ConfigSub() {
                 setSearch(event.target.value);
                 setPage(1);
               }}
-              style={{ flex: "1 1 220px", minWidth: 180 }}
+              style={{
+                flex: "1 1 220px",
+                minWidth: 180,
+              }}
             />
 
             <select
@@ -836,11 +1032,17 @@ export default function ConfigSub() {
         )}
 
         {rows === null ? (
-          <div className="loading" role="status">Loading...</div>
+          <div className="loading" role="status">
+            Loading...
+          </div>
         ) : visibleRows.length === 0 ? (
           <EmptyState
             art={false}
-            title={rows.length === 0 ? "Nothing here yet" : "No matching rules"}
+            title={
+              rows.length === 0
+                ? "Nothing here yet"
+                : "No matching rules"
+            }
             lines={[
               rows.length === 0
                 ? `Select "${cfg.button}" to add the first one.`
@@ -864,10 +1066,14 @@ export default function ConfigSub() {
                           >
                             {label}
                             {sortKey === key
-                              ? sortDirection === "asc" ? " ↑" : " ↓"
+                              ? sortDirection === "asc"
+                                ? " ↑"
+                                : " ↓"
                               : ""}
                           </button>
-                        ) : label}
+                        ) : (
+                          label
+                        )}
                       </th>
                     ))}
 
@@ -877,7 +1083,8 @@ export default function ConfigSub() {
                         <th>Updated</th>
                       </>
                     )}
-                    <th />
+
+                    <th>Actions</th>
                   </tr>
                 </thead>
 
@@ -885,72 +1092,180 @@ export default function ConfigSub() {
                   {pagedRows.map((row) => (
                     <tr key={row.id}>
                       {cfg.cols.map(([key]) => (
-                        <td key={key}>{cell(key, row, variableNames)}</td>
+                        <td key={key}>
+                          {cell(key, row, variableNames)}
+                        </td>
                       ))}
 
                       {sub === "rules" && (
                         <>
                           <td>
-                            <span className={"state-text " + (row.is_enabled ? "activated" : "not_activated")}>
-                              {row.is_enabled ? "Enabled" : "Disabled"}
+                            <span
+                              className={
+                                "state-text " +
+                                (row.is_enabled
+                                  ? "activated"
+                                  : "not_activated")
+                              }
+                            >
+                              {row.is_enabled
+                                ? "Enabled"
+                                : "Disabled"}
                             </span>
                           </td>
-                          <td title={`Created: ${auditText(row.created_at)}`}>
-                            {auditText(row.updated_at || row.created_at)}
+
+                          <td
+                            title={`Created: ${auditText(
+                              row.created_at
+                            )}`}
+                          >
+                            {auditText(
+                              row.updated_at || row.created_at
+                            )}
                           </td>
                         </>
                       )}
 
                       <td className="right">
                         {sub === "rules" ? (
-                          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, justifyContent: "flex-end" }}>
+                          <div className="config-action-icons">
                             <button
                               type="button"
-                              className="btn-outline"
-                              disabled={busyRuleId === row.id}
-                              onClick={() => startEdit(row)}
+                              className="config-icon-btn add"
+                              title="Add rule"
+                              aria-label="Add rule"
+                              onClick={() => {
+                                // Connect this to the existing
+                                // collection-to-rule assignment flow.
+                              }}
                             >
-                              Edit
+                              <PlusCircle size={17} />
                             </button>
 
                             <button
                               type="button"
-                              className="btn-outline"
+                              className="config-icon-btn edit"
+                              title="Edit rule"
+                              aria-label="Edit rule"
+                              disabled={busyRuleId === row.id}
+                              onClick={() =>
+                                nav(
+                                  `/assets/${row.target_asset_id}/monitoring-rules/${row.rule_type}/edit`,
+                                  {
+                                    state: {
+                                      editingRule: row,
+                                    },
+                                  }
+                                )
+                              }
+                            >
+                              <Pencil size={17} />
+                            </button>
+
+                            <button
+                              type="button"
+                              className="config-icon-btn toggle"
+                              title={
+                                row.is_enabled
+                                  ? "Disable rule"
+                                  : "Enable rule"
+                              }
+                              aria-label={
+                                row.is_enabled
+                                  ? "Disable rule"
+                                  : "Enable rule"
+                              }
                               disabled={busyRuleId === row.id}
                               onClick={() => toggleRule(row)}
                             >
-                              {busyRuleId === row.id
-                                ? "Saving..."
-                                : row.is_enabled ? "Disable" : "Enable"}
+                              <Power size={17} />
                             </button>
 
                             <button
                               type="button"
-                              className="btn-outline"
+                              className="config-icon-btn duplicate"
+                              title="Duplicate rule"
+                              aria-label="Duplicate rule"
                               disabled={busyRuleId === row.id}
                               onClick={() => duplicate(row)}
                             >
-                              Duplicate
+                              <Copy size={17} />
                             </button>
 
                             <button
                               type="button"
-                              className="btn-danger"
+                              className="config-icon-btn delete"
+                              title="Delete rule"
+                              aria-label="Delete rule"
                               disabled={busyRuleId === row.id}
                               onClick={() => remove(row)}
                             >
-                              Delete
+                              <Trash2 size={17} />
                             </button>
                           </div>
+                        ) : sub === "collections" ? (
+  <div className="config-action-icons">
+    {/* Add Rule */}
+ <button
+  type="button"
+  className="btn-outline"
+  title="Add rule to collection"
+  onClick={() => {
+    setActiveCollection({
+      id: row.id,
+      name: row.name,
+    });
+  }}
+>
+  <PlusCircle size={16} />
+  Add Rule
+</button>
+
+    {/* Edit Rule */}
+    <button
+      type="button"
+      className="btn-outline"
+      title="Edit collection rules"
+      onClick={() => {
+        nav("/configuration/rules", {
+          state: {
+            collectionId: row.id,
+            collectionName: row.name,
+            action: "edit",
+          },
+        });
+      }}
+    >
+      <Pencil size={16} />
+      Edit Rule
+    </button>
+
+    {/* Delete Collection */}
+    <button
+      type="button"
+      className="btn-danger"
+      title="Delete collection"
+      aria-label="Delete collection"
+      disabled={busyRuleId === row.id}
+      onClick={() => remove(row)}
+    >
+      <Trash2 size={17} />
+    </button>
+  </div>
+
                         ) : (
-                          <button
-                            type="button"
-                            className="btn-danger"
-                            disabled={busyRuleId === row.id}
-                            onClick={() => remove(row)}
-                          >
-                            Delete
-                          </button>
+                          <div className="config-action-icons">
+                            <button
+                              type="button"
+                              className="config-icon-btn delete"
+                              title={`Delete ${cfg.noun.toLowerCase()}`}
+                              aria-label={`Delete ${cfg.noun.toLowerCase()}`}
+                              disabled={busyRuleId === row.id}
+                              onClick={() => remove(row)}
+                            >
+                              <Trash2 size={17} />
+                            </button>
+                          </div>
                         )}
                       </td>
                     </tr>
@@ -962,33 +1277,62 @@ export default function ConfigSub() {
             {sub === "rules" && (
               <div
                 className="pagination"
-                style={{ display: "flex", flexWrap: "wrap", alignItems: "center", justifyContent: "space-between", gap: 10, marginTop: 16 }}
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 10,
+                  marginTop: 16,
+                }}
               >
                 <span className="muted">
-                  Showing {visibleRows.length === 0 ? 0 : (currentPage - 1) * PAGE_SIZE + 1}
+                  Showing{" "}
+                  {visibleRows.length === 0
+                    ? 0
+                    : (currentPage - 1) * PAGE_SIZE + 1}
                   {" - "}
-                  {Math.min(currentPage * PAGE_SIZE, visibleRows.length)}
+                  {Math.min(
+                    currentPage * PAGE_SIZE,
+                    visibleRows.length
+                  )}
                   {" of "}
                   {visibleRows.length} rules
                 </span>
 
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 8,
+                    alignItems: "center",
+                  }}
+                >
                   <button
                     type="button"
                     className="btn-outline"
                     disabled={currentPage <= 1}
-                    onClick={() => setPage((value) => Math.max(1, value - 1))}
+                    onClick={() =>
+                      setPage((value) =>
+                        Math.max(1, value - 1)
+                      )
+                    }
                   >
                     Previous
                   </button>
 
-                  <span>Page {currentPage} of {totalPages}</span>
+                  <span>
+                    Page {currentPage} of {totalPages}
+                  </span>
 
                   <button
                     type="button"
                     className="btn-outline"
                     disabled={currentPage >= totalPages}
-                    onClick={() => setPage((value) => Math.min(totalPages, value + 1))}
+                    onClick={() =>
+                      setPage((value) =>
+                        Math.min(totalPages, value + 1)
+                      )
+                    }
                   >
                     Next
                   </button>
@@ -1001,13 +1345,19 @@ export default function ConfigSub() {
 
       {open && sub !== "documents" && (
         <CreateModal
-          title={
-            sub === "rules"
-              ? editingRule ? "Edit monitoring rule" : cfg.button
-              : cfg.button
-          }
+         title={
+  sub === "collections" && activeCollection
+    ? `Add Rule to ${activeCollection.name}`
+    : sub === "rules"
+      ? editingRule
+        ? "Edit monitoring rule"
+        : cfg.button
+      : cfg.button
+}
           submitLabel={
-            sub === "rules" && editingRule ? "Save changes" : cfg.button
+            sub === "rules" && editingRule
+              ? "Save changes"
+              : cfg.button
           }
           intro={
             sub === "rules"
@@ -1016,26 +1366,49 @@ export default function ConfigSub() {
                 : "Selecting a variable assigns the rule to that variable's machine. Backend validation may prevent changing a rule's target after evaluation has started."
               : undefined
           }
-          fields={sub === "rules" ? ruleFields : fieldsFor(sub, variables)}
+          fields={
+            sub === "rules"
+              ? ruleFields
+              : fieldsFor(sub, variables)
+          }
           initialValues={
             sub === "rules" && editingRule
               ? {
                   name: editingRule.name,
                   description: editingRule.description || "",
-                  variable_id: editingRule.variable_id ?? "",
+                  variable_id:
+                    editingRule.variable_id ?? "",
                   operator: editingRule.operator || ">=",
                   threshold: editingRule.threshold ?? "",
                   severity: editingRule.severity || "warning",
                 }
               : {}
           }
-          onSubmit={sub === "rules" && editingRule ? edit : create}
+          onSubmit={
+            sub === "rules" && editingRule
+              ? edit
+              : create
+          }
           onClose={() => {
             setOpen(false);
             setEditingRule(null);
           }}
         />
       )}
+      {activeCollection && (
+      <ReusableRuleModal
+        collection={activeCollection}
+        onClose={() => setActiveCollection(null)}
+        onCreated={async () => {
+          setMsg({
+            text: "Reusable rule created successfully.",
+            error: false,
+          });
+
+          await load();
+        }}
+      />
+    )}
     </div>
   );
 }

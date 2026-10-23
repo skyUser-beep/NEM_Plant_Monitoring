@@ -358,17 +358,22 @@ const openScheduleEdit = (schedule) => {
   );
 };
 
-  const openEdit = (record) => {
-  if (record.schedule_id) {
-    navigate(
-      `/assets/${assetId}/maintenance/schedules/${record.schedule_id}/edit`
-    );
-    return;
-  }
 
+
+const openEdit = (record) => {
   setError("");
   setNotice("");
-  setDialog({ kind: "edit", record });
+
+  const editId = record.schedule_id || record.id;
+
+  navigate(
+    `/assets/${assetId}/maintenance/schedules/${editId}/edit`,
+    {
+      state: {
+        maintenanceRecord: record,
+      },
+    }
+  );
 };
 
   const save = async (event) => {
@@ -971,20 +976,23 @@ const openScheduleEdit = (schedule) => {
                 </select>
               </label>
               {dialog.kind === "create" && (
-               <label className="field">Status <span className="req">*</span>
-               <select
-               name="status"
-               value={values.status}
-               onChange={updateValue}
-               required
-               disabled={busy}>
-                {STATUSES.map((item) => (
-                  <option key={item} value={item}>
-                    {item.replace("_", " ")}
-                    </option>
-                  ))}
-                  </select>
-                  </label>
+            
+<label className="field">
+  Status <span className="req">*</span>
+  <select
+    name="status"
+    value={values.status}
+    onChange={updateValue}
+    required
+    disabled={busy}
+  >
+    {STATUSES.map((item) => (
+      <option key={item} value={item}>
+        {item.replaceAll("_", " ")}
+      </option>
+    ))}
+  </select>
+</label>
               )}
               <label className="field">Priority <span className="req">*</span>
                 <select name="priority" value={values.priority} onChange={updateValue} required disabled={busy}>
