@@ -37,6 +37,9 @@ class MonitoringRuleTemplate(Base):
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     evaluation_interval_seconds: Mapped[int | None] = mapped_column()
     stale_after_seconds: Mapped[int | None] = mapped_column()
+    collection_id: Mapped[int | None] = mapped_column(
+        ForeignKey("rule_collections.id", ondelete="SET NULL"), index=True
+    )
     legacy_rule_id: Mapped[int | None] = mapped_column(unique=True)
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime(), default=lambda: datetime.now(timezone.utc), nullable=False

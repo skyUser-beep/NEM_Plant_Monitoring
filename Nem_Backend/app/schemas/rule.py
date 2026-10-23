@@ -184,6 +184,7 @@ class RuleCreate(ORMModel):
 class RuleTemplateCreate(ORMModel):
     name: str = Field(min_length=1, max_length=200)
     description: str | None = None
+    collection_id: int | None = Field(default=None, ge=1)
     rule_type: Literal[
         "parameter_threshold",
         "runtime_duration",

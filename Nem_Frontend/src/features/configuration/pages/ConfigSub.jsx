@@ -28,6 +28,7 @@ import {
   Power,
 } from "lucide-react";
 import ReusableRuleModal from "./ReusableRuleModal.jsx";
+import RuleCollectionCreateModal from "./RuleCollectionCreateModal.jsx";
 
 const DOC_TYPES = [
   ["Instruction", "Instruction"],
@@ -60,6 +61,7 @@ const CRUD = {
     cols: [
       ["name", "Name"],
       ["description", "Description"],
+      ["rules", "Rules"],
     ],
   },
   documents: {
@@ -213,6 +215,12 @@ function cell(key, row, variableNames) {
         ))}
       </span>
     );
+  }
+
+  if (key === "rules") {
+    return row.rules?.length
+      ? row.rules.map((rule) => rule.name).join(", ")
+      : <span className="muted">No rules</span>;
   }
 
   const value = row[key];
@@ -1210,10 +1218,12 @@ export default function ConfigSub() {
   type="button"
   className="btn-outline"
   title="Add rule to collection"
+  disabled={row.rule_count >= 5}
   onClick={() => {
     setActiveCollection({
       id: row.id,
       name: row.name,
+      ruleCount: row.rule_count || 0,
     });
   }}
 >
@@ -1343,7 +1353,28 @@ export default function ConfigSub() {
         )}
       </div>
 
-      {open && sub !== "documents" && (
+      {open && sub === "collections" && (
+        <RuleCollectionCreateModal
+          onClose={() => setOpen(false)}
+          onCreate={async (payload) => {
+            await api.post("/collections", payload);
+            setOpen(false);
+            setMsg({
+              text: "Collection and monitoring rules created.",
+              error: false,
+            });
+            try {
+              await load();
+            } catch (error) {
+              setMsg({
+                text: `Collection created, but the list could not be refreshed: ${error.message}`,
+                error: true,
+              });
+            }
+          }}
+        />
+      )}
+      {open && sub !== "documents" && sub !== "collections" && (
         <CreateModal
          title={
   sub === "collections" && activeCollection

@@ -545,10 +545,12 @@ export default function RuleLibrary() {
   }, [templates, search, status]);
 
   const save = async (values) => {
-    const payload =
-      editing && !supportsCurrentRuleEditor(editing)
+    const payload = {
+      ...(editing && !supportsCurrentRuleEditor(editing)
         ? legacyTemplatePayload(values, editing)
-        : templatePayload(values);
+        : templatePayload(values)),
+      collection_id: editing?.collection_id ?? null,
+    };
     if (editing) await api.put(`/rule-templates/${editing.id}`, payload);
     else await api.post("/rule-templates", payload);
     setModalOpen(false);

@@ -19,6 +19,31 @@ def initialize_database(engine: Engine) -> None:
     Base.metadata.create_all(bind=engine)
     inspector = inspect(engine)
     table_names = set(inspector.get_table_names())
+    if "nem_monitoring_rule_templates" in table_names:
+        template_columns = {
+            column["name"]
+            for column in inspector.get_columns("nem_monitoring_rule_templates")
+        }
+        if "collection_id" not in template_columns:
+            with engine.begin() as connection:
+                if engine.dialect.name == "postgresql":
+                    connection.execute(text(
+                        "ALTER TABLE nem_monitoring_rule_templates "
+                        "ADD COLUMN IF NOT EXISTS collection_id INTEGER "
+                        "REFERENCES rule_collections(id) ON DELETE SET NULL"
+                    ))
+                else:
+                    connection.execute(text(
+                        "ALTER TABLE nem_monitoring_rule_templates "
+                        "ADD COLUMN collection_id INTEGER "
+                        "REFERENCES rule_collections(id) ON DELETE SET NULL"
+                    ))
+        with engine.begin() as connection:
+            connection.execute(text(
+                "CREATE INDEX IF NOT EXISTS "
+                "ix_nem_monitoring_rule_templates_collection_id "
+                "ON nem_monitoring_rule_templates (collection_id)"
+            ))
     if "instruction_documents" in table_names:
         document_columns = {
             column["name"]

@@ -81,6 +81,9 @@ class ProfileUpdate(BaseModel):
 class CollectionCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     description: str | None = None
+    rules: list[RuleTemplateCreate] | None = Field(
+        default=None, min_length=1, max_length=5
+    )
 
     @field_validator("name")
     @classmethod
@@ -548,11 +551,34 @@ def list_rule_templates(
             query.order_by(MonitoringRuleTemplate.name, MonitoringRuleTemplate.id)
         ).all()
 
+
+def _validate_template_collection(
+    session: Session,
+    collection_id: int | None,
+    excluded_template_id: int | None = None,
+) -> None:
+        if collection_id is None:
+            return
+        if session.get(RuleCollection, collection_id) is None:
+            raise HTTPException(status_code=404, detail="Rule collection was not found")
+        query = select(func.count()).select_from(MonitoringRuleTemplate).where(
+            MonitoringRuleTemplate.collection_id == collection_id
+        )
+        if excluded_template_id is not None:
+            query = query.where(MonitoringRuleTemplate.id != excluded_template_id)
+        if (session.scalar(query) or 0) >= 5:
+            raise HTTPException(
+                status_code=422,
+                detail="A rule collection can contain no more than five rules",
+            )
+
+
 #Creating a template not an asset-specific rule - templates are reusable definitions that can be assigned to multiple assets
 @router.post("/rule-templates", response_model=RuleTemplateRead, status_code=201)
 def create_rule_template(
         payload: RuleTemplateCreate, session: Session = Depends(get_db)
 ) -> MonitoringRuleTemplate:
+        _validate_template_collection(session, payload.collection_id)
         template = MonitoringRuleTemplate(**payload.model_dump())
         session.add(template)
         session.commit()
@@ -581,6 +607,10 @@ def update_rule_template(
         if template is None:
             raise HTTPException(status_code=404, detail="Rule template was not found")
         values = payload.model_dump()
+        if values["collection_id"] != template.collection_id:
+            _validate_template_collection(
+                session, values["collection_id"], excluded_template_id=template.id
+            )
         semantic_fields = (
             "rule_type",
             "required_variable_types",
@@ -1502,7 +1532,28 @@ def frontend_asset_events(
 @router.get("/collections")
 def list_collections(session: Session = Depends(get_db)) -> list[dict[str, Any]]:
     rows = session.scalars(select(RuleCollection).order_by(RuleCollection.id)).all()
-    return [{"id": row.id, "name": row.name, "description": row.description} for row in rows]
+    templates = session.scalars(
+        select(MonitoringRuleTemplate)
+        .where(MonitoringRuleTemplate.collection_id.is_not(None))
+        .order_by(MonitoringRuleTemplate.name, MonitoringRuleTemplate.id)
+    ).all()
+    templates_by_collection: dict[int, list[dict[str, Any]]] = {}
+    for template in templates:
+        if template.collection_id is None:
+            continue
+        templates_by_collection.setdefault(template.collection_id, []).append(
+            {"id": template.id, "name": template.name}
+        )
+    return [
+        {
+            "id": row.id,
+            "name": row.name,
+            "description": row.description,
+            "rules": templates_by_collection.get(row.id, []),
+            "rule_count": len(templates_by_collection.get(row.id, [])),
+        }
+        for row in rows
+    ]
 
 #Create a collecton
 @router.post("/collections", status_code=201)
@@ -1510,12 +1561,27 @@ def create_collection(payload: CollectionCreate, session: Session = Depends(get_
     collection = RuleCollection(name=payload.name.strip(), description=payload.description)
     session.add(collection)
     try:
+        session.flush()
+        templates = [
+            MonitoringRuleTemplate(
+                **rule.model_dump(exclude={"collection_id"}),
+                collection_id=collection.id,
+            )
+            for rule in (payload.rules or [])
+        ]
+        session.add_all(templates)
         session.commit()
     except IntegrityError as error:
         session.rollback()
         raise HTTPException(status_code=409, detail="A collection with this name already exists") from error
     session.refresh(collection)
-    return {"id": collection.id, "name": collection.name, "description": collection.description}
+    return {
+        "id": collection.id,
+        "name": collection.name,
+        "description": collection.description,
+        "rules": [{"id": item.id, "name": item.name} for item in templates],
+        "rule_count": len(templates),
+    }
 
 #Delete a collection
 @router.delete("/collections/{collection_id}", status_code=204)
@@ -1523,6 +1589,13 @@ def delete_collection(collection_id: int, session: Session = Depends(get_db)) ->
     collection = session.get(RuleCollection, collection_id)
     if collection is None:
         raise HTTPException(status_code=404, detail="Collection was not found")
+    templates = session.scalars(
+        select(MonitoringRuleTemplate).where(
+            MonitoringRuleTemplate.collection_id == collection_id
+        )
+    ).all()
+    for template in templates:
+        template.collection_id = None
     session.delete(collection)
     session.commit()
 

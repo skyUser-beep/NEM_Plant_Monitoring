@@ -19,7 +19,10 @@ export default function ReusableRuleModal({
     setSaving(true);
 
     try {
-      const payload = templatePayload(values);
+      const payload = {
+        ...templatePayload(values),
+        collection_id: collection.id,
+      };
       const result = await api.post("/rule-templates", payload);
 
       await onCreated?.(result, collection);
@@ -32,7 +35,7 @@ export default function ReusableRuleModal({
   return (
     <CreateModal
       title="Create reusable rule"
-      intro={`Create a reusable rule for collection "${collection.name}", then assign it to assets.`}
+      intro={`Add a reusable rule to "${collection.name}" (${collection.ruleCount || 0} of 5 rules). It can then be assigned to assets.`}
       fields={FIELDS}
       initialValues={initialTemplate(null)}
       submitLabel={saving ? "Creating..." : "Create rule"}
