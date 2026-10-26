@@ -18,7 +18,7 @@ export default function Settings() {
   useEffect(() => {
     const safe = (promise, fn) => promise.then(fn).catch(() => "");
     Promise.all([
-      safe(api.get("/me"), (u) => u?.name || ""),
+      safe(api.get("/auth/me"), (u) => u?.username || ""),
       safe(api.get("/settings/email"), (s) => (s?.host ? "Set up" : "Not set up")),
       safe(api.get("/settings/analytics"), (s) => (s?.databus_host ? "Configured" : "Not set up")),
       safe(api.get("/settings/connectivity"), (s) => (s?.databus_host ? "Configured" : "Not set up")),

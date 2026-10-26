@@ -1,14 +1,16 @@
 ﻿
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
-import { Trash2 } from "lucide-react";
+import { Download, Trash2 } from "lucide-react";
 import CopyRulesModal from "../components/CopyRulesModal.jsx";
 import PredefinedRulesModal from "../../rules/components/PredefinedRulesModal.jsx";
 import { api } from "../../../services/api.js";
+import { useAuth } from "../../auth/AuthContext.jsx";
 import {
   createLiveUpdateScheduler,
   subscribeLiveUpdates,
 } from "../../../services/liveUpdates.js";
+import CurrentMaintenanceCards from "../components/CurrentMaintenanceCards.jsx";
 import MaintenancePanel from "../components/MaintenancePanel.jsx";
 import "./AssetDetail.css";
 import {
@@ -28,6 +30,7 @@ import {
   EmptyState,
   Modal,
   StatusBadge,
+  useConfirmation,
 } from "../../../components/common/UI.jsx";
 import {
   GearIcon,
@@ -132,9 +135,29 @@ function compactRuleDuration(seconds) {
 
 function eventActionLabel(eventType) {
   if (!eventType) return "Event";
+  if (eventType === "alert_acknowledged") return "Alert Acknowledged";
+  if (eventType === "rule_completed") return "Rule Completed";
   return eventType
     .replaceAll("_", " ")
     .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function eventAuditSummary(event) {
+  const metadata = event?.metadata || {};
+  const parts = [];
+  if (metadata.acknowledged_by) {
+    parts.push(`Acknowledged by ${metadata.acknowledged_by}`);
+  }
+  if (metadata.acknowledged_at) {
+    parts.push(`at ${formatTime(metadata.acknowledged_at)}`);
+  }
+  if (metadata.completed_by) {
+    parts.push(`Completed by ${metadata.completed_by}`);
+  }
+  if (metadata.completed_at) {
+    parts.push(`at ${formatTime(metadata.completed_at)}`);
+  }
+  return parts.join(" · ");
 }
 
 function ruleConditionSummary(rule) {
@@ -443,6 +466,11 @@ const VARIABLE_FIELDS = [
 ];
 
 export default function AssetDetail() {
+  const confirm = useConfirmation();
+  const { user } = useAuth();
+  const isAdministrator = user?.role === "Administrator";
+  const canManageRules = isAdministrator || user?.role === "Supervisor";
+  const canManageLogbook = canManageRules;
   const { id } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
@@ -455,9 +483,6 @@ export default function AssetDetail() {
 
   const [tab, setTab] = useState(
     location.state?.activeTab === "logbook" ? "logbook" : "status"
-  );
-  const [focusMaintenanceScheduleId, setFocusMaintenanceScheduleId] = useState(
-    () => location.state?.focusMaintenanceScheduleId ?? null
   );
   const [list, setList] = useState("activated");
   const [rules, setRules] = useState([]);
@@ -482,6 +507,8 @@ export default function AssetDetail() {
   const [ruleActionMenuId, setRuleActionMenuId] = useState(null);
   const [lifecycleAction, setLifecycleAction] = useState(null);
   const [viewRule, setViewRule] = useState(null);
+  const [completionDetails, setCompletionDetails] = useState(null);
+  const [completionDetailsError, setCompletionDetailsError] = useState("");
   const [actionNotice, setActionNotice] = useState("");
   const [sortMenu, setSortMenu] = useState(false);
   const [modal, setModal] = useState(null);
@@ -508,10 +535,41 @@ export default function AssetDetail() {
   const [deletingEventId, setDeletingEventId] = useState(null);
   const [eventDeleteError, setEventDeleteError] = useState("");
   const [deletingLogId, setDeletingLogId] = useState(null);
+  const [exportError, setExportError] = useState("");
+  const [exporting, setExporting] = useState(false);
 
   const seq = useRef(0);
   const bulkRequest = useRef(false);
   const permanentDeleteRequest = useRef(false);
+
+  useEffect(() => {
+    if (!menu && !sortMenu && ruleActionMenuId === null) return undefined;
+
+    const closeMenus = () => {
+      setMenu(false);
+      setSortMenu(false);
+      setRuleActionMenuId(null);
+    };
+    const handlePointerDown = (event) => {
+      if (!(event.target instanceof Element)) return;
+      const openDropdowns = document.querySelectorAll(
+        ".asset-page .dropdown[data-menu-open='true']"
+      );
+      if (![...openDropdowns].some((dropdown) => dropdown.contains(event.target))) {
+        closeMenus();
+      }
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") closeMenus();
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [menu, ruleActionMenuId, sortMenu]);
 
   
   const loadLive = useCallback(async ({
@@ -678,8 +736,14 @@ export default function AssetDetail() {
   }, [loadLogs, refreshStatus]);
 
   const deleteEvent = async (event) => {
-    if (deletingEventId !== null) return;
-    if (!window.confirm("Permanently delete this event? This cannot be undone.")) {
+    if (!isAdministrator || deletingEventId !== null) return;
+    if (
+      !(await confirm("Permanently delete this event? This cannot be undone.", {
+        title: "Delete event",
+        confirmLabel: "Delete permanently",
+        destructive: true,
+      }))
+    ) {
       return;
     }
     setDeletingEventId(event.id);
@@ -764,13 +828,7 @@ export default function AssetDetail() {
     const navigationState = location.state;
 
     if (navigationState?.activeTab === "logbook") {
-      setTab("logbook");
-    }
-
-    if (navigationState?.focusMaintenanceScheduleId) {
-      setFocusMaintenanceScheduleId(
-        navigationState.focusMaintenanceScheduleId
-      );
+      setTab("status");
     }
 
     if (navigationState?.createdNotice) {
@@ -1004,6 +1062,41 @@ const filteredEvents = [...events]
       new Date(a.time || a.occurred_at || 0).getTime()
   );
  
+  const exportExcel = async ({
+    rows,
+    headers,
+    sheetName,
+    fileName,
+    confirmMessage,
+  }) => {
+    if (
+      !(await confirm(confirmMessage, {
+        title: "Export Excel file",
+        confirmLabel: "Download",
+      }))
+    ) return;
+    setExportError("");
+    setExporting(true);
+    try {
+      const XLSX = await import("@e965/xlsx");
+      const worksheet = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+      XLSX.writeFile(workbook, fileName);
+    } catch (error) {
+      setExportError(error.message || "Could not export the Excel file.");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const exportFileDate = new Date().toISOString().slice(0, 10);
+  const assetFileName =
+    (asset?.name || `asset-${assetId}`)
+      .replace(/[^a-z0-9-_]+/gi, "-")
+      .replace(/^-+|-+$/g, "")
+      .toLowerCase() || `asset-${assetId}`;
+
   const refreshAll = async () => {
     await Promise.all([
       loadLive(),
@@ -1012,7 +1105,7 @@ const filteredEvents = [...events]
   };
 
   const confirmLifecycleChange = async () => {
-    if (!lifecycleAction || deletingRuleId !== null) return;
+    if (!canManageRules || !lifecycleAction || deletingRuleId !== null) return;
     const { rule, action } = lifecycleAction;
     setDeletingRuleId(rule.id);
     setLoadError("");
@@ -1040,11 +1133,50 @@ const filteredEvents = [...events]
     return "Deactivated";
   };
 
+  const openRuleDetails = async (rule) => {
+    setViewRule(rule);
+    setCompletionDetails(null);
+    setCompletionDetailsError("");
+
+    try {
+      const response = await api.get(`/events?rule_id=${rule.id}&limit=100`);
+      const ruleEvents = response.items || [];
+      const acknowledgement = ruleEvents.find(
+        (item) => item.event_type === "alert_acknowledged"
+      );
+      const completion = ruleEvents.find(
+        (item) => item.event_type === "rule_completed"
+      );
+      setCompletionDetails({
+        acknowledged_by:
+          completion?.metadata?.acknowledged_by ||
+          acknowledgement?.metadata?.acknowledged_by,
+        acknowledged_at:
+          completion?.metadata?.acknowledged_at ||
+          acknowledgement?.metadata?.acknowledged_at ||
+          acknowledgement?.occurred_at,
+        completed_by: completion?.metadata?.completed_by,
+        completed_at:
+          completion?.metadata?.completed_at || completion?.occurred_at,
+      });
+    } catch (error) {
+      setCompletionDetailsError(
+        error.message || "Could not load completion details."
+      );
+    }
+  };
+
   const remove = async (rule) => {
+    if (!canManageRules) return;
     if (
-      !window.confirm(
-        `Archive the rule “${rule.name}”? It will be hidden from the rule list, and its alert and evaluation history will be retained.`
-      )
+      !(await confirm(
+        `Archive the rule “${rule.name}”? It will be hidden from the rule list, and its alert and evaluation history will be retained.`,
+        {
+          title: "Archive rule",
+          confirmLabel: "Archive",
+          destructive: true,
+        }
+      ))
     ) {
       return;
     }
@@ -1058,11 +1190,16 @@ const filteredEvents = [...events]
   };
 
   const permanentlyDeleteRule = async (rule) => {
-    if (permanentDeleteRequest.current) return;
+    if (!isAdministrator || permanentDeleteRequest.current) return;
     if (
-      !window.confirm(
-        `Permanently delete “${rule.name}”? This irreversibly removes the rule, its alerts, and its evaluation history. Maintenance records linked to its alerts must be removed first.`
-      )
+      !(await confirm(
+        `Permanently delete “${rule.name}”? This irreversibly removes the rule, its alerts, and its evaluation history. Maintenance records linked to its alerts must be removed first.`,
+        {
+          title: "Permanently delete rule",
+          confirmLabel: "Delete permanently",
+          destructive: true,
+        }
+      ))
     ) {
       return;
     }
@@ -1084,6 +1221,7 @@ const filteredEvents = [...events]
   };
 
   const addRule = async (values) => {
+    if (!canManageRules) return;
     const rule = buildAssetMonitoringRule(values, assetId, {
       variables: availableVariables,
       cycleVariableIds,
@@ -1122,7 +1260,7 @@ const filteredEvents = [...events]
   );
 
   const bulk = async (state) => {
-    if (bulkRequest.current || bulkSaving) return;
+    if (!canManageRules || bulkRequest.current || bulkSaving) return;
     const affected = rules.filter((rule) =>
       state === "activated" ? !isAct(rule) : isAct(rule)
     ).length;
@@ -1130,9 +1268,14 @@ const filteredEvents = [...events]
       const scope = children
         ? "this asset and its included child assets"
         : "this asset only";
-      if (!window.confirm(
-        `Deactivate ${affected} active rule(s) on ${scope}? Active alerts for those rules will be resolved.`
-      )) {
+      if (!(await confirm(
+        `Deactivate ${affected} active rule(s) on ${scope}? Active alerts for those rules will be resolved.`,
+        {
+          title: "Deactivate rules",
+          confirmLabel: "Deactivate",
+          destructive: true,
+        }
+      ))) {
         return;
       }
     }
@@ -1164,6 +1307,7 @@ const filteredEvents = [...events]
   };
 
   const addLog = async (values) => {
+    if (!canManageLogbook) return;
     if (!values.text?.trim()) {
       throw new Error("Enter a logbook entry.");
     }
@@ -1177,8 +1321,17 @@ const filteredEvents = [...events]
   };
 
   const deleteLogEntry = async (entry) => {
-    if (deletingLogId !== null) return;
-    if (!window.confirm("Permanently delete this maintenance log entry? This cannot be undone.")) {
+    if (!isAdministrator || deletingLogId !== null) return;
+    if (
+      !(await confirm(
+        "Permanently delete this maintenance log entry? This cannot be undone.",
+        {
+          title: "Delete maintenance entry",
+          confirmLabel: "Delete permanently",
+          destructive: true,
+        }
+      ))
+    ) {
       return;
     }
 
@@ -1196,6 +1349,7 @@ const filteredEvents = [...events]
   };
 
   const saveAsset = async (values) => {
+    if (!isAdministrator) return;
     await api.patch(`/assets/${assetId}`, {
       name: values.name.trim(),
       asset_type: values.asset_type.trim(),
@@ -1208,6 +1362,7 @@ const filteredEvents = [...events]
   };
 
   const addVariable = async (values) => {
+    if (!isAdministrator) return;
     await api.post(`/assets/${assetId}/variables`, {
       name: values.name.trim(),
       key: values.key.trim(),
@@ -1232,7 +1387,7 @@ const filteredEvents = [...events]
 };
 
   const updateVariable = async (values) => {
-    if (!editingVariable) return;
+    if (!isAdministrator || !editingVariable) return;
     await api.patch(`/variables/${editingVariable.id}`, {
       name: values.name.trim(),
       key: values.key.trim(),
@@ -1251,9 +1406,14 @@ const filteredEvents = [...events]
   };
 
   const deleteAsset = async () => {
-    if (deletingAsset) return;
-    const confirmed = window.confirm(
-      `Permanently delete asset "${asset.name}" and its asset-scoped event history? This cannot be undone. Deletion is blocked if it still has child assets, variables, readings, rules, alerts, or maintenance records.`
+    if (!isAdministrator || deletingAsset) return;
+    const confirmed = await confirm(
+      `Permanently delete asset "${asset.name}" and its asset-scoped event history? This cannot be undone. Deletion is blocked if it still has child assets, variables, readings, rules, alerts, or maintenance records.`,
+      {
+        title: "Permanently delete asset",
+        confirmLabel: "Delete permanently",
+        destructive: true,
+      }
     );
     if (!confirmed) return;
 
@@ -1271,9 +1431,14 @@ const filteredEvents = [...events]
   };
 
   const deleteVariable = async (variable) => {
-    if (deletingVariableId !== null) return;
-    const confirmed = window.confirm(
-      `Permanently delete variable "${variable.name}"? Variables with readings, monitoring rules, alerts, or an OPC UA mapping cannot be deleted.`
+    if (!isAdministrator || deletingVariableId !== null) return;
+    const confirmed = await confirm(
+      `Permanently delete variable "${variable.name}"? Variables with readings, monitoring rules, alerts, or an OPC UA mapping cannot be deleted.`,
+      {
+        title: "Permanently delete variable",
+        confirmLabel: "Delete permanently",
+        destructive: true,
+      }
     );
     if (!confirmed) return;
 
@@ -1369,6 +1534,8 @@ const filteredEvents = [...events]
           <button
             className="link-btn"
             onClick={() => setModal("settings")}
+            disabled={!isAdministrator}
+            title={!isAdministrator ? "Administrator access required to manage assets." : undefined}
           >
             <GearIcon size={17} /> Asset settings
           </button>
@@ -1376,8 +1543,8 @@ const filteredEvents = [...events]
           <button
             className="link-btn danger-link"
             onClick={deleteAsset}
-            disabled={deletingAsset}
-            title="Permanently delete this asset if it has no related records"
+            disabled={deletingAsset || !isAdministrator}
+            title={!isAdministrator ? "Administrator access required to manage assets." : "Permanently delete this asset if it has no related records"}
           >
             {deletingAsset ? "Deleting asset…" : "Delete asset"}
           </button>
@@ -1385,6 +1552,7 @@ const filteredEvents = [...events]
           <button
             className="link-btn"
             onClick={() => setModal("variables")}
+            title="View configured variables; only Administrators can change them."
           >
             <AssetIcon size={17} /> Variables
           </button>
@@ -1496,7 +1664,7 @@ const filteredEvents = [...events]
 
             <div className="spacer" />
 
-            <div className="dropdown">
+            <div className="dropdown" data-menu-open={sortMenu}>
               <button
                 className="link-btn"
                 onClick={() => setSortMenu(!sortMenu)}
@@ -1534,11 +1702,13 @@ const filteredEvents = [...events]
             <button
             className="btn-primary"
             onClick={() => setModal("addRuleOptions")}
+            disabled={!canManageRules}
+            title={!canManageRules ? "You do not have permission to manage monitoring rules." : undefined}
             >
               <PlusCircle size={17} /> Add Rule
               </button>
 
-            <div className="dropdown">
+            <div className="dropdown" data-menu-open={menu}>
               <button
                 className="icon-outline sm"
                 onClick={() => setMenu(!menu)}
@@ -1553,7 +1723,8 @@ const filteredEvents = [...events]
                   <div className="menu right" role="menu">
                       <button
                       type="button"
-                      disabled={bulkSaving}
+                      disabled={bulkSaving || !canManageRules}
+                      title={!canManageRules ? "You do not have permission to manage monitoring rules." : undefined}
                       role="menuitem"
                       onClick={() => bulk("activated")}
                       >
@@ -1561,7 +1732,8 @@ const filteredEvents = [...events]
                       </button>
                         <button
                         type="button"
-                        disabled={bulkSaving}
+                        disabled={bulkSaving || !canManageRules}
+                        title={!canManageRules ? "You do not have permission to manage monitoring rules." : undefined}
                       role="menuitem"
                         onClick={() => bulk("not_activated")}
                         >Deactivate all rules</button>
@@ -1570,7 +1742,7 @@ const filteredEvents = [...events]
                     </div>
                     </div>
 
-          {shown.length === 0 ? (
+          {shown.length === 0 && list === "activated" ? (
             <div className="panel">
               <EmptyState
                 art={false}
@@ -1789,7 +1961,10 @@ const filteredEvents = [...events]
                     </div>
 
                     <div className="rule-card-actions">
-                      <div className="dropdown rule-actions-menu">
+                      <div
+                        className="dropdown rule-actions-menu"
+                        data-menu-open={ruleActionMenuId === rule.id}
+                      >
                         <button
                           type="button"
                           className="icon-outline sm"
@@ -1812,7 +1987,7 @@ const filteredEvents = [...events]
                               role="menuitem"
                               onClick={() => {
                                 setRuleActionMenuId(null);
-                                setViewRule(rule);
+                                openRuleDetails(rule);
                               }}
                             >
                               View rule
@@ -1825,7 +2000,8 @@ const filteredEvents = [...events]
                                   setRuleActionMenuId(null);
                                   setLifecycleAction({ rule, action: "suspend" });
                                 }}
-                                disabled={deletingRuleId !== null}
+                                disabled={deletingRuleId !== null || !canManageRules}
+                                title={!canManageRules ? "You do not have permission to manage monitoring rules." : undefined}
                               >
                                 Suspend rule
                               </button>
@@ -1838,7 +2014,8 @@ const filteredEvents = [...events]
                                   setRuleActionMenuId(null);
                                   setLifecycleAction({ rule, action: "resume" });
                                 }}
-                                disabled={deletingRuleId !== null}
+                                disabled={deletingRuleId !== null || !canManageRules}
+                                title={!canManageRules ? "You do not have permission to manage monitoring rules." : undefined}
                               >
                                 Activate rule
                               </button>
@@ -1851,7 +2028,8 @@ const filteredEvents = [...events]
                                   setRuleActionMenuId(null);
                                   setLifecycleAction({ rule, action: "activate" });
                                 }}
-                                disabled={deletingRuleId !== null}
+                                disabled={deletingRuleId !== null || !canManageRules}
+                                title={!canManageRules ? "You do not have permission to manage monitoring rules." : undefined}
                               >
                                 Activate rule
                               </button>
@@ -1864,7 +2042,8 @@ const filteredEvents = [...events]
                                   setRuleActionMenuId(null);
                                   setLifecycleAction({ rule, action: "deactivate" });
                                 }}
-                                disabled={deletingRuleId !== null}
+                                disabled={deletingRuleId !== null || !canManageRules}
+                                title={!canManageRules ? "You do not have permission to manage monitoring rules." : undefined}
                               >
                                 Deactivate rule
                               </button>
@@ -1879,7 +2058,8 @@ const filteredEvents = [...events]
                                       setRuleActionMenuId(null);
                                       remove(rule);
                                     }}
-                                    disabled={deletingRuleId !== null}
+                                    disabled={deletingRuleId !== null || !canManageRules}
+                                    title={!canManageRules ? "You do not have permission to manage monitoring rules." : undefined}
                                   >
                                     Archive
                                   </button>
@@ -1890,7 +2070,8 @@ const filteredEvents = [...events]
                                       setRuleActionMenuId(null);
                                       permanentlyDeleteRule(rule);
                                     }}
-                                    disabled={deletingRuleId !== null}
+                                    disabled={deletingRuleId !== null || !isAdministrator}
+                                    title={!isAdministrator ? "Administrator access required for permanent deletion." : undefined}
                                   >
                                     {deletingRuleId === rule.id
                                       ? "Deleting…"
@@ -1898,6 +2079,22 @@ const filteredEvents = [...events]
                                   </button>
                                 </>
                               )}
+                            {lifecycleStatus(rule) === "completed" && (
+                              <button
+                                type="button"
+                                role="menuitem"
+                                onClick={() => {
+                                  setRuleActionMenuId(null);
+                                  permanentlyDeleteRule(rule);
+                                }}
+                                disabled={deletingRuleId !== null || !isAdministrator}
+                                title={!isAdministrator ? "Administrator access required for permanent deletion." : undefined}
+                              >
+                                {deletingRuleId === rule.id
+                                  ? "Deleting…"
+                                  : "Delete permanently"}
+                              </button>
+                            )}
                           </div>
                         )}
                       </div>
@@ -1907,6 +2104,12 @@ const filteredEvents = [...events]
               })}
             </div>
           )}
+          <CurrentMaintenanceCards
+            assetId={assetId}
+            onChanged={refreshMaintenanceData}
+            onCompleted={() => setList("not_activated")}
+            showCompleted={list === "not_activated"}
+          />
         </>
       )}
 
@@ -1914,7 +2117,6 @@ const filteredEvents = [...events]
   <>
     <MaintenancePanel
       assetId={assetId}
-      focusScheduleId={focusMaintenanceScheduleId}
       onChanged={refreshMaintenanceData}
     />
 
@@ -1927,7 +2129,33 @@ const filteredEvents = [...events]
         {filteredLogs.length} maintenance entries
       </span>
     </div>
+    <button
+      type="button"
+      className="icon-outline sm export-icon"
+      title={exporting ? "Preparing Excel export" : "Export filtered maintenance logbook entries to Excel"}
+      aria-label="Export maintenance logbook entries to Excel"
+      disabled={filteredLogs.length === 0 || exporting}
+      onClick={() =>
+        exportExcel({
+          headers: ["Date and time", "Entry", "Entry type", "Technician"],
+          rows: filteredLogs.map((entry) => [
+            entry.time || entry.created_at
+              ? formatTime(entry.time || entry.created_at)
+              : "",
+            entry.text || entry.title || entry.summary || "",
+            entry.maintenance_type || "Note",
+            entry.assigned_technician || "",
+          ]),
+          sheetName: "Maintenance logbook",
+          fileName: `${assetFileName}-maintenance-logbook-${exportFileDate}.xlsx`,
+          confirmMessage: `Download ${filteredLogs.length} filtered maintenance logbook entries as an Excel file?`,
+        })
+      }
+    >
+      <Download size={17} aria-hidden="true" />
+    </button>
   </div>
+  {exportError && <p className="notice error" role="alert">{exportError}</p>}
 
   <div className="maintenance-log-filters" aria-label="Filter maintenance logbook">
     <label>
@@ -2044,7 +2272,7 @@ const filteredEvents = [...events]
                       title="Permanently delete maintenance log entry"
                       aria-label={`Permanently delete maintenance log entry ${entry.title || entry.summary || entry.id}`}
                       onClick={() => deleteLogEntry(entry)}
-                      disabled={deletingLogId !== null}
+                      disabled={deletingLogId !== null || !isAdministrator}
                     >
                       <Trash2 size={16} aria-hidden="true" />
                     </button>
@@ -2067,6 +2295,49 @@ const filteredEvents = [...events]
 {/* Event Log */}
 {tab === "events" && (
   <div className="event-log-section">
+    <div className="event-log-heading">
+      <div>
+        <h2>Event log</h2>
+        <span className="muted">{filteredEvents.length} events</span>
+      </div>
+      <button
+        type="button"
+        className="icon-outline sm export-icon"
+        title={exporting ? "Preparing Excel export" : "Export filtered events to Excel"}
+        aria-label="Export event log to Excel"
+        disabled={filteredEvents.length === 0 || exporting}
+        onClick={() =>
+          exportExcel({
+            headers: ["Date and time", "Event", "Details", "Asset", "Assigned rule"],
+            rows: filteredEvents.map((event) => [
+              event.time || event.occurred_at
+                ? new Date(event.time || event.occurred_at).toLocaleString()
+                : "",
+              eventActionLabel(event.event_type),
+              [event.text || event.message || "", eventAuditSummary(event)]
+                .filter(Boolean)
+                .join(" · "),
+              event.asset_name ||
+                (event.asset_id != null ? `Asset ${event.asset_id}` : "System"),
+              event.rule_name ||
+                event.assigned_rule ||
+                event.rule?.name ||
+                (event.event_type === "maintenance_completed"
+                  ? "Maintenance"
+                  : event.rule_id != null
+                    ? `Rule #${event.rule_id}`
+                    : "Not assigned"),
+            ]),
+            sheetName: "Event log",
+            fileName: `${assetFileName}-event-log-${exportFileDate}.xlsx`,
+            confirmMessage: `Download ${filteredEvents.length} filtered events as an Excel file?`,
+          })
+        }
+      >
+        <Download size={17} aria-hidden="true" />
+      </button>
+    </div>
+    {exportError && <p className="notice error" role="alert">{exportError}</p>}
     {eventDeleteError && (
       <div className="event-log-error" role="alert">
         {eventDeleteError}
@@ -2172,6 +2443,9 @@ const filteredEvents = [...events]
                   <td>
                     <strong>{eventActionLabel(event.event_type)}</strong>
                     <div>{event.text || event.message || "—"}</div>
+                    {eventAuditSummary(event) && (
+                      <small className="muted">{eventAuditSummary(event)}</small>
+                    )}
                   </td>
 
                   <td>
@@ -2197,9 +2471,9 @@ const filteredEvents = [...events]
                       <button
                         type="button"
                         className="event-delete-icon"
-                        title="Permanently delete event"
+                        title={!isAdministrator ? "Administrator access required to delete events." : "Permanently delete event"}
                         aria-label={`Permanently delete ${eventActionLabel(event.event_type)} event`}
-                        disabled={deletingEventId !== null}
+                        disabled={deletingEventId !== null || !isAdministrator}
                         onClick={() => deleteEvent(event)}
                       >
                         <Trash2 size={16} aria-hidden="true" />
@@ -2245,6 +2519,39 @@ const filteredEvents = [...events]
           <strong>Event details:</strong>{" "}
           {selectedEvent.text || selectedEvent.message || "—"}
         </p>
+        {selectedEvent.metadata?.acknowledged_by && (
+          <>
+            <p>
+              <strong>Acknowledged by:</strong>{" "}
+              {selectedEvent.metadata.acknowledged_by}
+            </p>
+            <p>
+              <strong>Acknowledged at:</strong>{" "}
+              {selectedEvent.metadata.acknowledged_at
+                ? formatTime(selectedEvent.metadata.acknowledged_at)
+                : (selectedEvent.time || selectedEvent.occurred_at)
+                  ? formatTime(selectedEvent.time || selectedEvent.occurred_at)
+                  : "—"}
+            </p>
+          </>
+        )}
+        {selectedEvent.metadata?.completed_by && (
+          <>
+            <p>
+              <strong>Completed by:</strong>{" "}
+              {selectedEvent.metadata.completed_by}
+            </p>
+            <p>
+              <strong>Completed at:</strong>{" "}
+              {selectedEvent.metadata.completed_at
+                ? formatTime(selectedEvent.metadata.completed_at)
+                : (selectedEvent.time || selectedEvent.occurred_at)
+                  ? formatTime(selectedEvent.time || selectedEvent.occurred_at)
+                  : "—"}
+            </p>
+            <p><strong>Result:</strong> Rule successfully completed.</p>
+          </>
+        )}
 
         <p>
           <strong>Asset:</strong>{" "}
@@ -2267,9 +2574,9 @@ const filteredEvents = [...events]
           <button
             type="button"
             className="event-delete-icon"
-            title="Permanently delete event"
+            title={!isAdministrator ? "Administrator access required to delete events." : "Permanently delete event"}
             aria-label="Permanently delete event"
-            disabled={deletingEventId === selectedEvent.id}
+            disabled={deletingEventId === selectedEvent.id || !isAdministrator}
             onClick={() => deleteEvent(selectedEvent)}
           >
             <Trash2 size={17} aria-hidden="true" />
@@ -2415,7 +2722,11 @@ const filteredEvents = [...events]
 {viewRule && (
   <Modal
     title={viewRule.name || "Monitoring rule"}
-    onClose={() => setViewRule(null)}
+    onClose={() => {
+      setViewRule(null);
+      setCompletionDetails(null);
+      setCompletionDetailsError("");
+    }}
     wide
   >
     <dl className="rule-detail-grid">
@@ -2476,9 +2787,61 @@ const filteredEvents = [...events]
           <dd>{viewRule.evaluation_message}</dd>
         </div>
       )}
+      {completionDetailsError ? (
+        <div>
+          <dt>Action history</dt>
+          <dd className="error-message">{completionDetailsError}</dd>
+        </div>
+      ) : completionDetails === null ? (
+        <div>
+          <dt>Action history</dt>
+          <dd>Loading acknowledgement and completion details…</dd>
+        </div>
+      ) : (
+        <>
+          {completionDetails.acknowledged_by && (
+            <>
+              <div>
+                <dt>Acknowledged by</dt>
+                <dd>{completionDetails.acknowledged_by}</dd>
+              </div>
+              <div>
+                <dt>Acknowledged at</dt>
+                <dd>{completionDetails.acknowledged_at
+                  ? formatTime(completionDetails.acknowledged_at)
+                  : "—"}</dd>
+              </div>
+            </>
+          )}
+          {lifecycleStatus(viewRule) === "completed" && (
+            <>
+              <div>
+                <dt>Completion</dt>
+                <dd>Rule successfully completed and deactivated.</dd>
+              </div>
+              <div>
+                <dt>Completed by</dt>
+                <dd>{completionDetails.completed_by || "—"}</dd>
+              </div>
+              <div>
+                <dt>Completed at</dt>
+                <dd>{completionDetails.completed_at
+                  ? formatTime(completionDetails.completed_at)
+                  : viewRule.completed_at
+                    ? formatTime(viewRule.completed_at)
+                    : "—"}</dd>
+              </div>
+            </>
+          )}
+        </>
+      )}
     </dl>
     <div className="modal-actions">
-      <button type="button" className="btn-primary" onClick={() => setViewRule(null)}>
+      <button type="button" className="btn-primary" onClick={() => {
+        setViewRule(null);
+        setCompletionDetails(null);
+        setCompletionDetailsError("");
+      }}>
         Close
       </button>
     </div>
@@ -2630,13 +2993,16 @@ const filteredEvents = [...events]
           title={monitoringRuleSelection?.title || "Create monitoring rule"}
           submitLabel="Create rule"
           intro={
-            availableVariables.length
-              ? undefined
-              : "This asset has no active variables yet. Add one under Variables, then come back to create a rule."
+            !canManageRules
+              ? "You do not have permission to create or edit monitoring rules."
+              : availableVariables.length
+                ? undefined
+                : "This asset has no active variables yet. Add one under Variables, then come back to create a rule."
           }
           fields={monitoringRuleFormFields}
           initialValues={monitoringRuleSelection?.initialValues}
           onSubmit={addRule}
+          disabled={!canManageRules}
           onClose={() => {
             setModal(null);
             setMonitoringRuleSelection(null);
@@ -2650,6 +3016,8 @@ const filteredEvents = [...events]
           submitLabel="Add entry"
           fields={LOG_FIELDS}
           onSubmit={addLog}
+          disabled={!canManageLogbook}
+          intro={!canManageLogbook ? "You do not have permission to add logbook entries." : undefined}
           onClose={() => setModal(null)}
         />
       )}
@@ -2659,6 +3027,8 @@ const filteredEvents = [...events]
           title="Asset settings"
           submitLabel="Save changes"
           onSubmit={saveAsset}
+          disabled={!isAdministrator}
+          intro={!isAdministrator ? "Administrator access required to change asset settings." : undefined}
           onClose={() => setModal(null)}
           fields={[
             {
@@ -2702,6 +3072,8 @@ const filteredEvents = [...events]
           fields={VARIABLE_FIELDS}
           initialValues={editingVariable || {}}
           onSubmit={editingVariable ? updateVariable : addVariable}
+          disabled={!isAdministrator}
+          intro={!isAdministrator ? "Administrator access required to manage variables and OPC UA mappings." : undefined}
           onClose={() => {
             setEditingVariable(null);
             setModal("variables");
@@ -2768,7 +3140,8 @@ const filteredEvents = [...events]
                           setEditingVariable(variable);
                           setModal("editVariable");
                         }}
-                        disabled={deletingVariableId !== null}
+                        disabled={deletingVariableId !== null || !isAdministrator}
+                        title={!isAdministrator ? "Administrator access required to manage variables." : undefined}
                       >
                         Edit
                       </button>
@@ -2776,7 +3149,8 @@ const filteredEvents = [...events]
                         type="button"
                         className="btn-danger"
                         onClick={() => deleteVariable(variable)}
-                        disabled={deletingVariableId !== null}
+                        disabled={deletingVariableId !== null || !isAdministrator}
+                        title={!isAdministrator ? "Administrator access required to manage variables." : undefined}
                       >
                         {deletingVariableId === variable.id
                           ? "Deleting…"
@@ -2800,7 +3174,8 @@ const filteredEvents = [...events]
                 setEditingVariable(null);
                 setModal("addVariable");
               }}
-              disabled={deletingVariableId !== null}
+              disabled={deletingVariableId !== null || !isAdministrator}
+              title={!isAdministrator ? "Administrator access required to manage variables." : undefined}
             >
               Add variable
             </button>

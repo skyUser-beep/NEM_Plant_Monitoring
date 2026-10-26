@@ -33,6 +33,7 @@ from app.models import (
     RuleCounterState,
     RuleCollection,
     RuleState,
+    User,
     Variable,
 )
 from app.schemas.rule import (
@@ -63,19 +64,6 @@ MAX_TOTAL_UPLOAD_BYTES = 24 * 1024 * 1024
 MAX_FILES_PER_DOCUMENT = 10
 
 ALLOWED_DOCUMENT_EXTENSIONS = {".pdf", ".doc", ".docx", ".txt"}
-
-class ProfileUpdate(BaseModel):
-    name: str = Field(min_length=1, max_length=200)
-    email: str | None = Field(default=None, max_length=254)
-    phone: str | None = Field(default=None, max_length=50)
-
-    @field_validator("name")
-    @classmethod
-    def strip_name(cls, value: str) -> str:
-        value = value.strip()
-        if not value:
-            raise ValueError("Name cannot be empty")
-        return value
 
 #Validate a rule collection`s name and description.
 class CollectionCreate(BaseModel):
@@ -1869,19 +1857,18 @@ def import_configuration(
     session.commit()
     return {"rules": len(rules), "collections": created}
 
-#User profile use FrontendConfig model to store user profile information, such as name, email, and phone number. The get_profile endpoint retrieves the profile from the database and returns it to the frontend.
-# The update_profile endpoint allows the frontend to update the profile information in the database.
 @router.get("/me")
-def get_profile(session: Session = Depends(get_db)) -> dict[str, Any]:
-    profile = _config(session, "profile")
-    return {"name": profile.get("name", "Plant Operator"), "role": "Administrator",
-            "email": profile.get("email", ""), "phone": profile.get("phone", "")}
-
-#Validates and saves the new profile information
-@router.put("/me")
-def update_profile(payload: ProfileUpdate, session: Session = Depends(get_db)) -> dict[str, Any]:
-    _save_config(session, "profile", payload.model_dump())
-    return get_profile(session)
+def get_profile(request: Request, session: Session = Depends(get_db)) -> dict[str, Any]:
+    user_id = getattr(request.state, "auth_user_id", None)
+    user = session.get(User, user_id) if user_id is not None else None
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    return {
+        "name": user.username,
+        "username": user.username,
+        "role": user.role,
+        "is_active": user.is_active,
+    }
 
 #Frontend settings
 #only two sections are accepted : email and analytics

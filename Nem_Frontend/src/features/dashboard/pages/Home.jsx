@@ -44,10 +44,9 @@ export default function Home() {
   const [liveStatusError, setLiveStatusError] = useState("");
   const liveStatusRequest = useRef(false);
   const [error, setError] = useState("");
-  const [operator, setOperator] = useState("");
   const [ackError, setAckError] = useState("");
   const [busyId, setBusyId] = useState(null);
-  const [completionAlert, setCompletionAlert] = useState(null);
+  const [alertToAcknowledge, setAlertToAcknowledge] = useState(null);
 
   const loadSummary = useCallback(async () => {
     try {
@@ -164,23 +163,6 @@ export default function Home() {
     [refreshLiveScheduler, summaryScheduler]
   );
 
-  useEffect(() => {
-    let cancelled = false;
-
-    api
-      .get("/me")
-      .then((me) => {
-        if (!cancelled) {
-          setOperator(me?.name || "");
-        }
-      })
-      .catch(() => {});
-
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   const assetName = useMemo(
     () => new Map(assets.map((a) => [a.id, a.name])),
     [assets]
@@ -205,29 +187,34 @@ export default function Home() {
     [alerts]
   );
 
-  const completeRule = async () => {
-    if (!completionAlert || busyId !== null) return;
-    const alert = completionAlert;
+  const finishAlertAction = async (action) => {
+    if (!alertToAcknowledge || busyId !== null) return;
+    const alert = alertToAcknowledge;
     setBusyId(alert.id);
     setAckError("");
 
     try {
-      await api.post(`/alerts/${alert.id}/complete`);
+      await api.post(`/alerts/${alert.id}/${action}`);
 
       await Promise.all([
         loadSummary(),
         refreshLiveStatus(),
         refreshStatus?.(),
       ]);
-      setCompletionAlert(null);
+      setAlertToAcknowledge(null);
     } catch (err) {
       setAckError(
-        err.message || "Unable to complete this monitoring rule."
+        err.message || (action === "complete"
+          ? "Unable to complete this rule."
+          : "Unable to acknowledge this alert.")
       );
     } finally {
       setBusyId(null);
     }
   };
+
+  const acknowledgeAlert = () => finishAlertAction("acknowledge");
+  const completeAlert = () => finishAlertAction("complete");
 
   if (!summary && error) {
     return (
@@ -365,7 +352,7 @@ export default function Home() {
 
             {ackError && (
               <p className="notice error" role="alert">
-                Could not resolve and complete this alert: {ackError}
+                Could not update this alert: {ackError}
               </p>
             )}
 
@@ -419,7 +406,6 @@ export default function Home() {
                           state={alert.maintenance_schedule_id
                             ? {
                                 activeTab: "logbook",
-                                focusMaintenanceScheduleId: alert.maintenance_schedule_id,
                               }
                             : undefined}
                         >
@@ -458,17 +444,31 @@ export default function Home() {
                             : ""}
                         </span>
                       )}
-                      <button
-                        type="button"
-                        className="btn-outline"
-                        disabled={busyId === alert.id}
-                        onClick={() => {
-                          setAckError("");
-                          setCompletionAlert(alert);
-                        }}
-                      >
-                        {busyId === alert.id ? "Saving…" : "Acknowledge"}
-                      </button>
+                      {alert.acknowledged_at && alert.rule_id ? (
+                        <button
+                          type="button"
+                          className="btn-outline"
+                          disabled={busyId === alert.id}
+                          onClick={() => {
+                            setAckError("");
+                            setAlertToAcknowledge(alert);
+                          }}
+                        >
+                          {busyId === alert.id ? "Saving…" : "Complete"}
+                        </button>
+                      ) : !alert.acknowledged_at ? (
+                        <button
+                          type="button"
+                          className="btn-outline"
+                          disabled={busyId === alert.id}
+                          onClick={() => {
+                            setAckError("");
+                            setAlertToAcknowledge(alert);
+                          }}
+                        >
+                          {busyId === alert.id ? "Saving…" : "Acknowledge"}
+                        </button>
+                      ) : null}
                     </div>
                   </li>
                 ))}
@@ -523,17 +523,17 @@ export default function Home() {
           </section>
         </aside>
       </div>
-      {completionAlert && (
+      {alertToAcknowledge && (
         <Modal
-          title="Confirm resolution"
+          title="Confirm alert action"
           onClose={() => {
-            if (busyId === null) setCompletionAlert(null);
+            if (busyId === null) setAlertToAcknowledge(null);
           }}
         >
           <p>
-            Has this alert or warning been resolved successfully? Confirming
-            will deactivate the associated monitoring rule and mark it as
-            completed.
+            {alertToAcknowledge.rule_id
+              ? "Is the condition resolved and ready for this rule to be completed? Choose “No” to record your acknowledgement while keeping the alert active. Cancel makes no changes."
+              : "Acknowledge that you have seen this maintenance alert. Resolve it through maintenance management when the scheduled work is complete. Cancel makes no changes."}
           </p>
           {ackError && (
             <p className="notice error" role="alert">{ackError}</p>
@@ -543,20 +543,34 @@ export default function Home() {
               type="button"
               className="btn-outline"
               disabled={busyId !== null}
-              onClick={() => setCompletionAlert(null)}
+              onClick={() => setAlertToAcknowledge(null)}
             >
               Cancel
             </button>
-            <button
-              type="button"
-              className="btn-primary"
-              disabled={busyId !== null}
-              onClick={completeRule}
-            >
-              {busyId === completionAlert.id
-                ? "Saving…"
-                : "Yes, mark as completed"}
-            </button>
+            {!alertToAcknowledge.acknowledged_at && (
+              <button
+                type="button"
+                className="btn-outline"
+                disabled={busyId !== null}
+                onClick={acknowledgeAlert}
+              >
+                {busyId === alertToAcknowledge.id
+                  ? "Saving…"
+                  : "No, acknowledge only"}
+              </button>
+            )}
+            {alertToAcknowledge.rule_id && (
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={busyId !== null}
+                onClick={completeAlert}
+              >
+                {busyId === alertToAcknowledge.id
+                  ? "Saving…"
+                  : "Yes, complete rule"}
+              </button>
+            )}
           </div>
         </Modal>
       )}

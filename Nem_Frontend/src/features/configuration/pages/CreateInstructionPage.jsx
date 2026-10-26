@@ -2,9 +2,13 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../../../services/api.js";
+import { useAuth } from "../../auth/AuthContext.jsx";
 import "./CreateInstructionPage.css";
 
 export default function CreateInstructionPage() {
+  const { user } = useAuth();
+  const canManageInstructions =
+    user?.role === "Administrator" || user?.role === "Supervisor";
   const nav = useNavigate();
 
   const [name, setName] = useState("");
@@ -17,6 +21,7 @@ export default function CreateInstructionPage() {
   const [error, setError] = useState("");
 
   function addLabel() {
+    if (!canManageInstructions) return;
     const label = labelInput.trim();
 
     if (!label) return;
@@ -47,6 +52,7 @@ export default function CreateInstructionPage() {
 
   async function submit(event) {
     event.preventDefault();
+    if (!canManageInstructions) return;
     setError("");
 
     const cleanName = name.trim();
@@ -125,12 +131,21 @@ export default function CreateInstructionPage() {
         className="panel instruction-form"
         onSubmit={submit}
       >
+        {!canManageInstructions && (
+          <p className="notice" role="status">
+            Only Administrators and Supervisors can create instructions.
+          </p>
+        )}
         {error && (
           <p className="notice error" role="alert">
             {error}
           </p>
         )}
 
+        <fieldset
+          disabled={!canManageInstructions || busy}
+          style={{ border: 0, margin: 0, minWidth: 0, padding: 0 }}
+        >
         <div className="instruction-field">
           <label htmlFor="instruction-name">
             Name *
@@ -265,6 +280,7 @@ export default function CreateInstructionPage() {
             </ul>
           )}
         </div>
+        </fieldset>
 
         <div className="instruction-form-actions">
           <button
@@ -281,7 +297,8 @@ export default function CreateInstructionPage() {
           <button
             type="submit"
             className="btn-primary"
-            disabled={busy}
+            disabled={busy || !canManageInstructions}
+            title={!canManageInstructions ? "Only Administrators and Supervisors can create instructions." : undefined}
           >
             {busy ? "Submitting..." : "Submit"}
           </button>

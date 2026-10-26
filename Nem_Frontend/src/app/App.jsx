@@ -1,6 +1,6 @@
 
 import React from "react";
-import { Routes, Route } from "react-router-dom";
+import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 
 import Layout from "../components/common/Layout.jsx";
 
@@ -25,11 +25,33 @@ import Settings from "../features/settings/pages/Settings.jsx";
 import SettingsSub from "../features/settings/pages/SettingsSub.jsx";
 import CreateMaintenanceSchedulePage from "../features/assets/pages/CreateMaintenanceSchedulePage.jsx";
 import CreateMonitoringRulePage from "../features/assets/pages/CreateMonitoringRulePage.jsx";
+import LoginPage from "../features/auth/LoginPage.jsx";
+import AdminUsersPage from "../features/auth/AdminUsersPage.jsx";
+import { useAuth } from "../features/auth/AuthContext.jsx";
+import { ConfirmationProvider } from "../components/common/UI.jsx";
 
 export default function App() {
+  const { user, loading } = useAuth();
+  const location = useLocation();
+
+  if (loading) {
+    return <main className="auth-page"><p role="status">Checking session…</p></main>;
+  }
+
   return (
+    <ConfirmationProvider>
     <Routes>
-      <Route element={<Layout />}>
+      <Route
+        path="/login"
+        element={user ? <Navigate to="/" replace /> : <LoginPage />}
+      />
+      <Route
+        element={
+          user
+            ? <Layout />
+            : <Navigate to="/login" replace state={{ from: location }} />
+        }
+      >
         {/* Dashboard */}
         <Route path="/" element={<Home />} />
 
@@ -72,6 +94,10 @@ export default function App() {
         {/* Settings */}
         <Route path="/settings" element={<Settings />} />
         <Route
+          path="/settings/users"
+          element={<AdminUsersPage />}
+        />
+        <Route
           path="/settings/:sub"
           element={<SettingsSub />}
         />
@@ -102,5 +128,6 @@ export default function App() {
 <Route path="*" element={<Home />} />
       </Route>
     </Routes>
+    </ConfirmationProvider>
   );
 }

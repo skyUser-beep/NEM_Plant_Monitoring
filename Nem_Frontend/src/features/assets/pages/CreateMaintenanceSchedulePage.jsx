@@ -1,6 +1,7 @@
 
 import React, { useEffect, useState } from "react";
 import { api } from "../../../services/api.js";
+import { useAuth } from "../../auth/AuthContext.jsx";
 import "./CreateMaintenanceSchedulePage.css";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 
@@ -56,6 +57,8 @@ function getDocumentsArray(response) {
 }
 
 export default function CreateMaintenanceSchedulePage() {
+  const { user } = useAuth();
+  const canManageMaintenance = ["Administrator", "Supervisor"].includes(user?.role);
   const { id, scheduleId } = useParams();
   const isEdit = Boolean(scheduleId);
   const navigate = useNavigate();
@@ -246,7 +249,7 @@ export default function CreateMaintenanceSchedulePage() {
   const handleSubmit = async (event) => {
     event.preventDefault();
 
-    if (busy) return;
+    if (!canManageMaintenance || busy) return;
 
     setError("");
 
@@ -415,6 +418,11 @@ export default function CreateMaintenanceSchedulePage() {
             {error}
           </div>
         )}
+        {!canManageMaintenance && (
+          <div className="notice" role="status">
+            You do not have permission to create or edit maintenance schedules.
+          </div>
+        )}
 
         {loading ? (
           <p className="muted">
@@ -424,7 +432,7 @@ export default function CreateMaintenanceSchedulePage() {
           <>
             <fieldset
               className="create-schedule-fieldset"
-              disabled={busy}
+              disabled={busy || !canManageMaintenance}
             >
               <section className="create-schedule-section">
                 <h2>Schedule details</h2>
@@ -666,7 +674,8 @@ export default function CreateMaintenanceSchedulePage() {
               <button
                 type="submit"
                 className="btn-primary"
-                disabled={busy}
+                disabled={busy || !canManageMaintenance}
+                title={!canManageMaintenance ? "You do not have permission to create or edit maintenance schedules." : undefined}
               >
                 {busy
                 ? isEdit

@@ -2,7 +2,12 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { FileText, Timer, Trash2 } from "lucide-react";
 import { api } from "../../../services/api.js";
-import { EmptyState, Modal } from "../../../components/common/UI.jsx";
+import { useAuth } from "../../auth/AuthContext.jsx";
+import {
+  EmptyState,
+  Modal,
+  useConfirmation,
+} from "../../../components/common/UI.jsx";
 import { formatTime } from "../../../utils/format.js";
 import {
   LEGACY_RULE_CHOICES,
@@ -138,7 +143,10 @@ function validateForm(values, requirePlannedDates) {
   return "";
 }
 
-export default function MaintenancePanel({ assetId, focusScheduleId, onChanged }) {
+export default function MaintenancePanel({ assetId, onChanged }) {
+  const confirm = useConfirmation();
+  const { user } = useAuth();
+  const canManageMaintenance = ["Administrator", "Supervisor"].includes(user?.role);
   const navigate = useNavigate();
   const [records, setRecords] = useState([]);
   const [schedules, setSchedules] = useState([]);
@@ -167,10 +175,9 @@ export default function MaintenancePanel({ assetId, focusScheduleId, onChanged }
   });
   const [approvalDate, setApprovalDate] = useState("");
   const [clockNow, setClockNow] = useState(Date.now());
-  const handledFocusScheduleId = useRef(null);
 
   const permanentlyDeleteRecord = async (record) => {
-    if (busy) return;
+    if (!canManageMaintenance || busy) return;
     const scheduled =
       Boolean(record.schedule_id) &&
       !(record.status === "completed" && record.archived_at);
@@ -180,12 +187,23 @@ export default function MaintenancePanel({ assetId, focusScheduleId, onChanged }
     const confirmation = scheduled
       ? `Delete the entire schedule "${record.title}"${plannedDate ? `, scheduled for ${plannedDate}` : ""}, including its linked maintenance entries?`
       : `Permanently delete maintenance "${record.title}"${plannedDate ? `, scheduled for ${plannedDate}` : ""}?`;
-    if (!window.confirm(confirmation)) return;
+    if (
+      !(await confirm(confirmation, {
+        title: scheduled ? "Delete maintenance schedule" : "Delete maintenance",
+        confirmLabel: "Continue",
+        destructive: true,
+      }))
+    ) return;
     if (
       (scheduled || (record.planned_start_at && new Date(record.planned_start_at) > new Date())) &&
-      !window.confirm(
-        `Confirm again: permanently delete "${record.title}"${plannedDate ? ` scheduled for ${plannedDate}` : ""}? This cannot be undone.`
-      )
+      !(await confirm(
+        `Confirm again: permanently delete "${record.title}"${plannedDate ? ` scheduled for ${plannedDate}` : ""}? This cannot be undone.`,
+        {
+          title: "Confirm permanent deletion",
+          confirmLabel: "Delete permanently",
+          destructive: true,
+        }
+      ))
     ) {
       return;
     }
@@ -207,16 +225,26 @@ export default function MaintenancePanel({ assetId, focusScheduleId, onChanged }
   };
 
   const permanentlyDeleteSchedule = async (schedule) => {
-    if (busy) return;
+    if (!canManageMaintenance || busy) return;
     const dueDate = schedule.current_due_date
       ? displayDate(schedule.current_due_date)
       : null;
-    if (!window.confirm(
-      `Delete maintenance schedule "${schedule.title}"${dueDate ? `, due ${dueDate}` : ""}, including its linked maintenance entries?`
-    )) return;
-    if (!window.confirm(
-      `Confirm again: permanently delete schedule "${schedule.title}"${dueDate ? ` due ${dueDate}` : ""}? This cannot be undone.`
-    )) return;
+    if (!(await confirm(
+      `Delete maintenance schedule "${schedule.title}"${dueDate ? `, due ${dueDate}` : ""}, including its linked maintenance entries?`,
+      {
+        title: "Delete maintenance schedule",
+        confirmLabel: "Continue",
+        destructive: true,
+      }
+    ))) return;
+    if (!(await confirm(
+      `Confirm again: permanently delete schedule "${schedule.title}"${dueDate ? ` due ${dueDate}` : ""}? This cannot be undone.`,
+      {
+        title: "Confirm permanent deletion",
+        confirmLabel: "Delete permanently",
+        destructive: true,
+      }
+    ))) return;
     setBusy(true);
     setDeletingScheduleId(schedule.id);
     setError("");
@@ -269,42 +297,6 @@ export default function MaintenancePanel({ assetId, focusScheduleId, onChanged }
   }, [loadRecords, loadSchedules]);
 
   useEffect(() => {
-    if (
-      !focusScheduleId ||
-      loading ||
-      !schedulesLoaded ||
-      handledFocusScheduleId.current === String(focusScheduleId)
-    ) {
-      return;
-    }
-
-    handledFocusScheduleId.current = String(focusScheduleId);
-    const schedule = schedules.find(
-      (item) => String(item.id) === String(focusScheduleId)
-    );
-    if (!schedule) {
-      setError("The maintenance schedule for this alert could not be found.");
-      return;
-    }
-
-    const occurrence = records.find(
-      (record) =>
-        schedule.current_occurrence_id != null &&
-        String(record.id) === String(schedule.current_occurrence_id)
-    ) || records.find(
-      (record) =>
-        String(record.schedule_id) === String(schedule.id) &&
-        ["planned", "in_progress"].includes(record.status)
-    );
-
-    setDialog(
-      occurrence
-        ? { kind: "details", record: occurrence }
-        : { kind: "schedule-details", record: schedule }
-    );
-  }, [focusScheduleId, loading, records, schedules, schedulesLoaded]);
-
-  useEffect(() => {
     const timerIsRunning = records.some((record) => record.status === "in_progress");
     if (!timerIsRunning) return undefined;
     const timer = window.setInterval(() => setClockNow(Date.now()), 1000);
@@ -349,10 +341,12 @@ export default function MaintenancePanel({ assetId, focusScheduleId, onChanged }
   }, [dialog]);
 
   const openCreate = () => {
+    if (!canManageMaintenance) return;
     navigate(`/assets/${assetId}/maintenance/schedules/new`);
   };
 
 const openScheduleEdit = (schedule) => {
+  if (!canManageMaintenance) return;
   navigate(
     `/assets/${assetId}/maintenance/schedules/${schedule.id}/edit`
   );
@@ -361,6 +355,7 @@ const openScheduleEdit = (schedule) => {
 
 
 const openEdit = (record) => {
+  if (!canManageMaintenance) return;
   setError("");
   setNotice("");
 
@@ -378,7 +373,7 @@ const openEdit = (record) => {
 
   const save = async (event) => {
     event.preventDefault();
-    if (busy) return;
+    if (!canManageMaintenance || busy) return;
     setError("");
     setNotice("");
     if (dialog.kind === "schedule-create" || dialog.kind === "schedule-edit") {
@@ -511,7 +506,7 @@ const openEdit = (record) => {
     }));
   };
   const confirmNextOccurrence = async (schedule, dueDate) => {
-    if (busy) return;
+    if (!canManageMaintenance || busy) return;
     if (!dueDate) {
       setError("Choose a due date before confirming the next occurrence.");
       return;
@@ -532,7 +527,7 @@ const openEdit = (record) => {
     }
   };
   const declineNextOccurrence = async (schedule) => {
-    if (busy) return;
+    if (!canManageMaintenance || busy) return;
     setBusy(true);
     setError("");
     try {
@@ -561,7 +556,7 @@ const openEdit = (record) => {
     }
   };
   const changeMaintenanceStatus = async (record) => {
-    if (busy) return;
+    if (!canManageMaintenance || busy) return;
     const isStarting = record.status === "planned";
     if (!isStarting && record.status !== "in_progress") return;
     setBusy(true);
@@ -610,6 +605,108 @@ const openEdit = (record) => {
   const documentsForRecord = (record) =>
     schedules.find((schedule) => schedule.id === record.schedule_id)
       ?.instruction_documents || [];
+  const today = todayDateInput();
+  const visibleRecords = records.filter(
+    (record) =>
+      !(
+        record.schedule_id != null &&
+        (record.status === "in_progress" ||
+          (record.status === "planned" &&
+            record.planned_due_date === today))
+      )
+  );
+  const renderRecordCard = (record) => (
+    <article
+      className={`maintenance-record-card ${record.status || "planned"}`}
+      key={record.id}
+    >
+      <span className="maintenance-record-indicator" aria-hidden="true" />
+      <div className="maintenance-record-main">
+        <strong>{record.title}</strong>
+        <small>
+          {record.maintenance_type || "Maintenance"} ·{" "}
+          {record.priority || "medium"} priority
+        </small>
+      </div>
+      <div className="maintenance-record-status">
+        <span className={`maintenance-status ${record.status}`}>
+          {record.status === "in_progress" ? (
+            <><Timer size={13} aria-hidden="true" /> Started</>
+          ) : String(record.status || "planned").replaceAll("_", " ")}
+        </span>
+        <small>
+          {record.planned_start_at
+            ? formatTime(record.planned_start_at)
+            : "No planned start"}
+          {" — "}
+          {record.planned_end_at
+            ? formatTime(record.planned_end_at)
+            : "No planned end"}
+        </small>
+      </div>
+      <div className="maintenance-record-meta">
+        <span>
+          <small>Technician</small>
+          <strong>{record.assigned_technician || record.performed_by || "—"}</strong>
+        </span>
+        <span>
+          <small>Planned duration</small>
+          <strong>{plannedDurationDays(record)}</strong>
+        </span>
+        <span>
+          <small>Actual duration</small>
+          <strong>{actualDuration(record, clockNow)}</strong>
+        </span>
+      </div>
+      <div className="maintenance-actions">
+        <button
+          type="button"
+          className="btn-outline"
+          onClick={() => setDialog({ kind: "details", record })}
+          disabled={busy}
+        >
+          View
+        </button>
+        <button
+          type="button"
+          className="btn-outline"
+          onClick={() => {
+            const documents = documentsForRecord(record);
+            if (documents.length > 0) {
+              setMaterialViewer({
+                document: documents[0],
+                file: null,
+                documents,
+              });
+            }
+          }}
+          disabled={busy || documentsForRecord(record).length === 0}
+          title={
+            documentsForRecord(record).length > 0
+              ? "View attached instructions and documents"
+              : "No instruction or document attached"
+          }
+        >
+          <FileText size={14} aria-hidden="true" />
+          Materials
+        </button>
+        {record.status !== "in_progress" && (
+          <button
+            type="button"
+            className="maintenance-delete-icon"
+            title={!canManageMaintenance
+              ? "You do not have permission to change maintenance records."
+              : record.schedule_id ? "Permanently delete schedule" : "Permanently delete maintenance"}
+            aria-label={`Permanently delete ${record.schedule_id ? "schedule" : "maintenance"} ${record.title}`}
+            onClick={() => permanentlyDeleteRecord(record)}
+            disabled={busy || !canManageMaintenance}
+          >
+            <Trash2 size={16} aria-hidden="true" />
+          </button>
+        )}
+      </div>
+    </article>
+  );
 
   return (
     <>
@@ -626,7 +723,8 @@ const openEdit = (record) => {
               type="button"
               className="btn-primary"
               onClick={openCreate}
-              disabled={busy}
+              disabled={busy || !canManageMaintenance}
+              title={!canManageMaintenance ? "You do not have permission to create maintenance schedules." : undefined}
             >
               Add Maintenance
             </button>
@@ -635,106 +733,24 @@ const openEdit = (record) => {
 
         {error && <p className="notice error" role="alert">{error}</p>}
         {notice && <p className="notice" role="status">{notice}</p>}
+        {!canManageMaintenance && (
+          <p className="muted" role="status">
+            Maintenance records and schedules are view-only for your role.
+          </p>
+        )}
         {loading ? (
           <p className="muted" role="status">Loading maintenance history…</p>
-        ) : records.length === 0 ? (
+        ) : visibleRecords.length === 0 ? (
           <EmptyState
             art={false}
-            title="No maintenance jobs"
-            lines={["Create a job to start tracking planned and completed work."]}
+            title={records.length === 0 ? "No maintenance jobs" : "No other maintenance jobs"}
+            lines={records.length === 0
+              ? ["Create a job to start tracking planned and completed work."]
+              : ["Due-today scheduled work and active scheduled work are shown in Current status."]}
           />
         ) : (
           <div className="maintenance-record-list">
-            {records.map((record) => (
-              <article
-                className={`maintenance-record-card ${record.status || "planned"}`}
-                key={record.id}
-              >
-                <span className="maintenance-record-indicator" aria-hidden="true" />
-                <div className="maintenance-record-main">
-                  <strong>{record.title}</strong>
-                  <small>
-                    {record.maintenance_type || "Maintenance"} ·{" "}
-                    {record.priority || "medium"} priority
-                  </small>
-                </div>
-                <div className="maintenance-record-status">
-                  <span className={`maintenance-status ${record.status}`}>
-                    {record.status === "in_progress" ? (
-                      <><Timer size={13} aria-hidden="true" /> Started</>
-                    ) : String(record.status || "planned").replaceAll("_", " ")}
-                  </span>
-                  <small>
-                    {record.planned_start_at
-                      ? formatTime(record.planned_start_at)
-                      : "No planned start"}
-                    {" — "}
-                    {record.planned_end_at
-                      ? formatTime(record.planned_end_at)
-                      : "No planned end"}
-                  </small>
-                </div>
-                <div className="maintenance-record-meta">
-                  <span>
-                    <small>Technician</small>
-                    <strong>{record.assigned_technician || record.performed_by || "—"}</strong>
-                  </span>
-                  <span>
-                    <small>Planned duration</small>
-                    <strong>{plannedDurationDays(record)}</strong>
-                  </span>
-                  <span>
-                    <small>Actual duration</small>
-                    <strong>{actualDuration(record, clockNow)}</strong>
-                  </span>
-                </div>
-                <div className="maintenance-actions">
-                  <button
-                    type="button"
-                    className="btn-outline"
-                    onClick={() => setDialog({ kind: "details", record })}
-                    disabled={busy}
-                  >
-                    View
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-outline"
-                    onClick={() => {
-                      const documents = documentsForRecord(record);
-                      if (documents.length > 0) {
-                        setMaterialViewer({
-                          document: documents[0],
-                          file: null,
-                          documents,
-                        });
-                      }
-                    }}
-                    disabled={busy || documentsForRecord(record).length === 0}
-                    title={
-                      documentsForRecord(record).length > 0
-                        ? "View attached instructions and documents"
-                        : "No instruction or document attached"
-                    }
-                  >
-                    <FileText size={14} aria-hidden="true" />
-                    Materials
-                  </button>
-                  {record.status !== "in_progress" && (
-                    <button
-                      type="button"
-                      className="maintenance-delete-icon"
-                      title={record.schedule_id ? "Permanently delete schedule" : "Permanently delete maintenance"}
-                      aria-label={`Permanently delete ${record.schedule_id ? "schedule" : "maintenance"} ${record.title}`}
-                      onClick={() => permanentlyDeleteRecord(record)}
-                      disabled={busy}
-                    >
-                      <Trash2 size={16} aria-hidden="true" />
-                    </button>
-                  )}
-                </div>
-              </article>
-            ))}
+            {visibleRecords.map(renderRecordCard)}
           </div>
         )}
 
@@ -744,6 +760,7 @@ const openEdit = (record) => {
         <Modal title={dialog.kind === "schedule-create" ? "Add maintenance schedule" : "Edit maintenance schedule"} onClose={() => { if (!busy) setDialog(null); }} wide>
           <form className="maintenance-form" onSubmit={save}>
             {error && <p className="notice error" role="alert">{error}</p>}
+            <fieldset disabled={!canManageMaintenance} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
             <div className="maintenance-form-grid">
               <label className="field">Maintenance title <span className="req">*</span>
                 <input name="title" value={scheduleValues.title} onChange={updateScheduleValue} maxLength={200} required disabled={busy} />
@@ -796,10 +813,11 @@ const openEdit = (record) => {
                 <textarea name="description" value={scheduleValues.description} onChange={updateScheduleValue} rows={3} maxLength={10000} disabled={busy} />
               </label>
             </div>
+            </fieldset>
             {error && <p className="notice error" role="alert">{error}</p>}
             <div className="modal-actions">
               <button type="button" className="btn-outline" onClick={() => setDialog(null)} disabled={busy}>Cancel</button>
-              <button type="submit" className="btn-primary" disabled={busy}>{busy ? "Saving…" : dialog.kind === "schedule-create" ? "Create schedule" : "Save schedule"}</button>
+              <button type="submit" className="btn-primary" disabled={busy || !canManageMaintenance} title={!canManageMaintenance ? "You do not have permission to manage maintenance schedules." : undefined}>{busy ? "Saving…" : dialog.kind === "schedule-create" ? "Create schedule" : "Save schedule"}</button>
             </div>
           </form>
         </Modal>
@@ -896,12 +914,12 @@ const openEdit = (record) => {
             {dialog.record.recurrence_interval ? ` with a recurrence of every ${dialog.record.recurrence_interval} ${dialog.record.recurrence_unit}.` : "."}
           </p>
           <label className="field">Confirmed next due date
-            <input type="date" value={approvalDate} min={dialog.record.schedule_start_date} onChange={(event) => setApprovalDate(event.target.value)} disabled={busy} />
+            <input type="date" value={approvalDate} min={dialog.record.schedule_start_date} onChange={(event) => setApprovalDate(event.target.value)} disabled={busy || !canManageMaintenance} />
           </label>
           <p className="muted">Review the date and interval before approving the next occurrence.</p>
           <div className="modal-actions">
-            <button type="button" className="btn-danger" onClick={() => declineNextOccurrence(dialog.record)} disabled={busy}>Do not schedule</button>
-            <button type="button" className="btn-primary" onClick={() => confirmNextOccurrence(dialog.record, approvalDate)} disabled={busy}>Confirm date</button>
+            <button type="button" className="btn-danger" onClick={() => declineNextOccurrence(dialog.record)} disabled={busy || !canManageMaintenance} title={!canManageMaintenance ? "You do not have permission to manage maintenance schedules." : undefined}>Do not schedule</button>
+            <button type="button" className="btn-primary" onClick={() => confirmNextOccurrence(dialog.record, approvalDate)} disabled={busy || !canManageMaintenance} title={!canManageMaintenance ? "You do not have permission to manage maintenance schedules." : undefined}>Confirm date</button>
           </div>
         </Modal>
       )}
@@ -930,7 +948,8 @@ const openEdit = (record) => {
                 type="button"
                 className="btn-primary"
                 onClick={() => changeMaintenanceStatus(dialog.record)}
-                disabled={busy}
+                disabled={busy || !canManageMaintenance}
+                title={!canManageMaintenance ? "You do not have permission to manage maintenance." : undefined}
               >
                 {busy ? "Starting…" : "Start"}
               </button>
@@ -940,7 +959,8 @@ const openEdit = (record) => {
                 type="button"
                 className="btn-primary"
                 onClick={() => changeMaintenanceStatus(dialog.record)}
-                disabled={busy}
+                disabled={busy || !canManageMaintenance}
+                title={!canManageMaintenance ? "You do not have permission to manage maintenance." : undefined}
               >
                 {busy ? "Finishing…" : "Finish"}
               </button>
@@ -952,7 +972,8 @@ const openEdit = (record) => {
               const record = dialog.record;
               openEdit(record);
             }}
-            disabled={busy}>Edit</button>
+            disabled={busy || !canManageMaintenance}
+            title={!canManageMaintenance ? "You do not have permission to edit maintenance records." : undefined}>Edit</button>
             <button
             type="button"
             className="btn-outline"
@@ -966,6 +987,7 @@ const openEdit = (record) => {
         <Modal title="Edit maintenance" onClose={() => { if (!busy) setDialog(null); }} wide>
           <form className="maintenance-form" onSubmit={save}>
             {error && <p className="notice error" role="alert">{error}</p>}
+            <fieldset disabled={!canManageMaintenance} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
             <div className="maintenance-form-grid">
               <label className="field">Title <span className="req">*</span>
                 <input name="title" value={values.title} onChange={updateValue} required maxLength={200} disabled={busy} />
@@ -1033,9 +1055,10 @@ const openEdit = (record) => {
                 <textarea name="checklist" value={values.checklist} onChange={updateValue} rows={3} disabled={busy} />
               </label>
             </div>
+            </fieldset>
             <div className="modal-actions">
               <button type="button" className="btn-outline" onClick={() => setDialog(null)} disabled={busy}>Cancel</button>
-              <button type="submit" className="btn-primary" disabled={busy}>{busy ? "Saving…" : dialog.kind === "create" ? "Create maintenance" : "Save changes"}</button>
+              <button type="submit" className="btn-primary" disabled={busy || !canManageMaintenance} title={!canManageMaintenance ? "You do not have permission to manage maintenance." : undefined}>{busy ? "Saving…" : dialog.kind === "create" ? "Create maintenance" : "Save changes"}</button>
             </div>
           </form>
         </Modal>

@@ -11,6 +11,7 @@ import {
 } from "react-router-dom";
 
 import { api } from "../../../services/api.js";
+import { useAuth } from "../../auth/AuthContext.jsx";
 import {
   buildAssetMonitoringRule,
   monitoringRuleFormSelection,
@@ -216,6 +217,8 @@ const RULE_FIELDS = [
 ];
 
 export default function CreateMonitoringRulePage() {
+  const { user } = useAuth();
+  const canManageRules = ["Administrator", "Supervisor"].includes(user?.role);
   const { id, choiceId, ruleId } = useParams();
   const assetId = Number(id);
 
@@ -497,6 +500,7 @@ export default function CreateMonitoringRulePage() {
 
   async function submit(event) {
     event.preventDefault();
+    if (!canManageRules) return;
 
     if (saving || !selection) return;
 
@@ -617,6 +621,11 @@ export default function CreateMonitoringRulePage() {
           <p>{error}</p>
         </div>
       )}
+      {!canManageRules && (
+        <div className="banner" role="status">
+          You do not have permission to create or edit monitoring rules.
+        </div>
+      )}
 
       {variables.length === 0 && (
         <div className="banner" role="status">
@@ -674,6 +683,8 @@ export default function CreateMonitoringRulePage() {
                       )
                     }
                     rows={4}
+                    disabled={!canManageRules}
+                    title={!canManageRules ? "You do not have permission to edit monitoring rules." : undefined}
                   />
                 ) : field.type === "select" ? (
                   <select
@@ -683,7 +694,8 @@ export default function CreateMonitoringRulePage() {
                       ""
                     }
                     required={required}
-                    disabled={field.disabled}
+                    disabled={field.disabled || !canManageRules}
+                    title={!canManageRules ? "You do not have permission to edit monitoring rules." : undefined}
                     onChange={(event) =>
                       updateValue(
                         field.key,
@@ -716,6 +728,8 @@ export default function CreateMonitoringRulePage() {
                     value={values[field.key] ?? ""}
                     required={required}
                     placeholder={field.placeholder || ""}
+                    disabled={!canManageRules}
+                    title={!canManageRules ? "You do not have permission to edit monitoring rules." : undefined}
                     onChange={(event) =>
                       updateValue(
                         field.key,
@@ -763,7 +777,8 @@ export default function CreateMonitoringRulePage() {
           <button
             type="submit"
             className="btn-primary"
-            disabled={saving || variables.length === 0}
+            disabled={saving || variables.length === 0 || !canManageRules}
+            title={!canManageRules ? "You do not have permission to create or edit monitoring rules." : undefined}
           >
             {saving
               ? isEdit

@@ -15,8 +15,86 @@ from app.models import (
 )
 
 #creates tables defined in SQLAlchemy models if they do not exist
+def _migrate_auth_roles(engine: Engine) -> None:
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                UPDATE auth_users
+                SET role = CASE role
+                    WHEN 'Admin' THEN 'Administrator'
+                    WHEN 'Viewer' THEN 'Supervisor'
+                    ELSE role
+                END
+                WHERE role IN ('Admin', 'Viewer')
+                """
+            )
+        )
+        invalid_role = connection.execute(
+            text(
+                """
+                SELECT id, role
+                FROM auth_users
+                WHERE role NOT IN ('Administrator', 'Supervisor', 'Operator')
+                LIMIT 1
+                """
+            )
+        ).first()
+        if invalid_role is not None:
+            raise RuntimeError(
+                "Unsupported user role in auth_users "
+                f"(user id {invalid_role.id}, role {invalid_role.role!r}); "
+                "correct the role before starting the application"
+            )
+
+        if engine.dialect.name == "postgresql":
+            check_constraints = inspect(connection).get_check_constraints("auth_users")
+            if not any(
+                constraint["name"] == "ck_auth_users_role"
+                for constraint in check_constraints
+            ):
+                connection.execute(
+                    text(
+                        "ALTER TABLE auth_users "
+                        "ADD CONSTRAINT ck_auth_users_role "
+                        "CHECK (role IN "
+                        "('Administrator', 'Supervisor', 'Operator'))"
+                    )
+                )
+        elif engine.dialect.name == "sqlite":
+            connection.execute(
+                text(
+                    """
+                    CREATE TRIGGER IF NOT EXISTS auth_users_role_insert_guard
+                    BEFORE INSERT ON auth_users
+                    FOR EACH ROW
+                    WHEN NEW.role NOT IN ('Administrator', 'Supervisor', 'Operator')
+                    BEGIN
+                        SELECT RAISE(ABORT, 'invalid user role');
+                    END
+                    """
+                )
+            )
+            connection.execute(
+                text(
+                    """
+                    CREATE TRIGGER IF NOT EXISTS auth_users_role_update_guard
+                    BEFORE UPDATE OF role ON auth_users
+                    FOR EACH ROW
+                    WHEN NEW.role NOT IN ('Administrator', 'Supervisor', 'Operator')
+                    BEGIN
+                        SELECT RAISE(ABORT, 'invalid user role');
+                    END
+                    """
+                )
+            )
+        else:
+            raise RuntimeError("User role migration is not implemented for "f"{engine.dialect.name}")
+
+
 def initialize_database(engine: Engine) -> None:
     Base.metadata.create_all(bind=engine)
+    _migrate_auth_roles(engine)
     inspector = inspect(engine)
     table_names = set(inspector.get_table_names())
     if "nem_monitoring_rule_templates" in table_names:
@@ -118,15 +196,13 @@ def initialize_database(engine: Engine) -> None:
                     )
                 )
             if "completed_at" not in rule_columns:
-                column_type = (
-                    "TIMESTAMP WITH TIME ZONE"
+                column_type = ("TIMESTAMP WITH TIME ZONE"
                     if engine.dialect.name == "postgresql"
                     else "DATETIME"
                 )
                 if engine.dialect.name == "postgresql":
                     connection.execute(
-                        text(
-                            "ALTER TABLE nem_monitoring_rules "
+                        text("ALTER TABLE nem_monitoring_rules "
                             "ADD COLUMN IF NOT EXISTS completed_at "
                             + column_type
                         )
@@ -180,8 +256,7 @@ def initialize_database(engine: Engine) -> None:
     _migrate_existing_rule_counters(engine)
 
     if "nem_maintenance_schedules" in table_names:
-        schedule_columns = {
-            column["name"]
+        schedule_columns = {column["name"]
             for column in inspect(engine).get_columns(
                 "nem_maintenance_schedules"
             )
@@ -240,8 +315,7 @@ def initialize_database(engine: Engine) -> None:
         with engine.begin() as connection:
             for name, definition in record_column_definitions.items():
                 if name not in record_columns:
-                    connection.execute(text(
-                            "ALTER TABLE nem_maintenance_records "
+                    connection.execute(text("ALTER TABLE nem_maintenance_records "
                             f"ADD COLUMN {name} {definition}"
                         )
                     )
@@ -265,14 +339,12 @@ def initialize_database(engine: Engine) -> None:
 
         with engine.begin() as connection:
             if "maintenance_schedule_id" not in alert_columns:
-                connection.execute(text(
-                        "ALTER TABLE nem_alerts "
+                connection.execute(text("ALTER TABLE nem_alerts "
                         "ADD COLUMN maintenance_schedule_id INTEGER"
                     )
                 )
             if "maintenance_due_date" not in alert_columns:
-                connection.execute(text(
-                        "ALTER TABLE nem_alerts "
+                connection.execute(text("ALTER TABLE nem_alerts "
                         "ADD COLUMN maintenance_due_date DATE"
                     )
                 )

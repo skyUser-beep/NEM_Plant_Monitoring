@@ -1,3 +1,5 @@
+import { getAuthToken } from "./api.js";
+
 const API_BASE = import.meta.env.VITE_API_URL || "/api/v1";
 const subscribers = new Set();
 const seenEventIds = new Set();
@@ -38,7 +40,9 @@ function connect() {
     return;
   }
 
-  const connection = new WebSocket(websocketUrl());
+  const token = getAuthToken();
+  if (!token) return;
+  const connection = new WebSocket(websocketUrl(), [`nem-auth.${token}`, "nem-auth"]);
   socket = connection;
 
   const resetStaleTimer = () => {

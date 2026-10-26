@@ -1,4 +1,13 @@
 const BASE = (import.meta.env.VITE_API_URL || "/api/v1").replace(/\/+$/, "");
+export const AUTH_TOKEN_KEY = "nem-access-token";
+
+export function getAuthToken() {
+  try {
+    return localStorage.getItem(AUTH_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
 
 function describeError(body, fallback) {
   if (body && typeof body === "object") {
@@ -33,6 +42,9 @@ async function req(path, opts = {}) {
     res = await fetch(`${BASE}${path}`, {
       ...opts,
       headers: {
+        ...(getAuthToken()
+          ? { Authorization: `Bearer ${getAuthToken()}` }
+          : {}),
         ...(opts.body && !(opts.body instanceof FormData)
           ? { "Content-Type": "application/json" }
           : {}),
@@ -57,7 +69,14 @@ async function req(path, opts = {}) {
   }
 
   if (!res.ok) {
+    if (res.status === 401 && !pathIsLogin(path)) {
+      window.dispatchEvent(new Event("nem-auth-expired"));
+    }
     throw new ApiError(describeError(body, res.statusText || "Request failed"), res.status);
+  }
+
+  function pathIsLogin(path) {
+    return path === "/auth/login";
   }
   return body;
 }

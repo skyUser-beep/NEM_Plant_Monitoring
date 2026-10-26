@@ -14,10 +14,10 @@ from app.models import (
     MonitoringEvent,
     MonitoringRule,
     RuleState, # stores the current state associated with a rule and target
+    User, # stores the current state associated with a rule and target
     Variable, # represents a monitored variable belonging to an asset
 )
 from app.schemas.monitoring import (
-    AcknowledgeRequest,
     AlertRead,
     EvaluationResult,
     EventRead,
@@ -279,13 +279,19 @@ def get_alert(alert_id: int, session: Session = Depends(get_db)) -> Alert:
 @router.post("/alerts/{alert_id}/acknowledge", response_model=AlertRead)
 def acknowledge_alert(
     alert_id: int,
-    payload: AcknowledgeRequest | None = None,
+    request: Request,
     session: Session = Depends(get_db),
 ) -> Alert:
     # find the alert
-    alert = session.get(Alert, alert_id)
+    alert = session.scalar(
+        select(Alert).where(Alert.id == alert_id).with_for_update()
+    )
     if alert is None:
         raise HTTPException(status_code=404, detail=f"Alert {alert_id} was not found")
+    user_id = getattr(request.state, "auth_user_id", None)
+    user = session.get(User, user_id) if user_id is not None else None
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=401, detail="Authentication required")
     #Prevent acknowledging resolved alerts
     if alert.status != "active":
         raise HTTPException(status_code=409, detail="Resolved alerts cannot be acknowledged")
@@ -293,7 +299,7 @@ def acknowledge_alert(
     if alert.acknowledged_at is None:
         now = utc_now()
         alert.acknowledged_at = now
-        alert.acknowledged_by = payload.acknowledged_by if payload else None
+        alert.acknowledged_by = user.username
         #Emit an acknowledgment event 
         emit_event(
             session,
@@ -304,7 +310,12 @@ def acknowledge_alert(
             rule_id=alert.rule_id,
             alert_id=alert.id,
             severity=alert.severity,
-            metadata={"acknowledged_by": alert.acknowledged_by, "identity_verified": False},
+            metadata={
+                "acknowledged_by": alert.acknowledged_by,
+                "acknowledged_at": now.isoformat(),
+                "identity_verified": True,
+                "outcome": "acknowledged_not_resolved",
+            },
         )
         session.commit()
         session.refresh(alert)
@@ -314,6 +325,7 @@ def acknowledge_alert(
 @router.post("/alerts/{alert_id}/complete", response_model=AlertRead)
 def complete_rule_from_alert(
     alert_id: int,
+    request: Request,
     session: Session = Depends(get_db),
 ) -> Alert:
     alert = session.scalar(select(Alert).where(Alert.id == alert_id).with_for_update())
@@ -321,6 +333,10 @@ def complete_rule_from_alert(
         raise HTTPException(status_code=404, detail=f"Alert {alert_id} was not found")
     if alert.status != "active":
         raise HTTPException(status_code=409, detail="Resolved alerts cannot complete a rule")
+    user_id = getattr(request.state, "auth_user_id", None)
+    user = session.get(User, user_id) if user_id is not None else None
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=401, detail="Authentication required")
     if alert.rule_id is None:
         raise HTTPException(status_code=409,detail="Maintenance alerts must be resolved through maintenance scheduling.",)
 
@@ -346,6 +362,25 @@ def complete_rule_from_alert(
         raise HTTPException(status_code=409,detail="The monitoring rule no longer has an active warning or alert.",)
 
     now = utc_now()
+    if alert.acknowledged_at is None:
+        alert.acknowledged_at = now
+        alert.acknowledged_by = user.username
+        emit_event(
+            session,
+            event_type="alert_acknowledged",
+            message="Alert acknowledged as resolved and ready for completion.",
+            occurred_at=now,
+            asset_id=alert.target_asset_id,
+            rule_id=alert.rule_id,
+            alert_id=alert.id,
+            severity=alert.severity,
+            metadata={
+                "acknowledged_by": user.username,
+                "acknowledged_at": now.isoformat(),
+                "identity_verified": True,
+                "outcome": "acknowledged_and_completed",
+            },
+        )
     set_rule_enabled_state(session, rule, False, at=now)
     rule.lifecycle_status = "completed"
     rule.completed_at = now
@@ -358,7 +393,13 @@ def complete_rule_from_alert(
         rule_id=rule.id,
         alert_id=alert.id,
         severity=alert.severity,
-        metadata={"completed_at": now.isoformat()},
+        metadata={
+            "acknowledged_by": alert.acknowledged_by,
+            "acknowledged_at": alert.acknowledged_at.isoformat(),
+            "completed_by": user.username,
+            "completed_at": now.isoformat(),
+            "outcome": "rule_successfully_completed",
+        },
     )
     session.commit()
     session.refresh(alert)

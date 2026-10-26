@@ -1,7 +1,15 @@
 
-import React, { useEffect, useState } from "react";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
+import { AlertTriangle } from "lucide-react";
 import { EmptyArt } from "./Icons.jsx";
 
 export const EmptyState = ({ title, lines = [], art = true }) => (
@@ -68,6 +76,79 @@ export const Modal = ({ title, onClose, children, wide }) => {
   );
 };
 
+const ConfirmationContext = createContext(null);
+
+export function useConfirmation() {
+  const confirm = useContext(ConfirmationContext);
+  if (!confirm) {
+    throw new Error("useConfirmation must be used inside ConfirmationProvider");
+  }
+  return confirm;
+}
+
+export function ConfirmationProvider({ children }) {
+  const [request, setRequest] = useState(null);
+  const resolver = useRef(null);
+
+  const confirm = useCallback((message, options = {}) => {
+    if (resolver.current) resolver.current(false);
+    return new Promise((resolve) => {
+      resolver.current = resolve;
+      setRequest({
+        message,
+        title: options.title || "Please confirm",
+        confirmLabel: options.confirmLabel || "Confirm",
+        cancelLabel: options.cancelLabel || "Cancel",
+        destructive: Boolean(options.destructive),
+      });
+    });
+  }, []);
+
+  const finish = useCallback((result) => {
+    resolver.current?.(result);
+    resolver.current = null;
+    setRequest(null);
+  }, []);
+
+  return (
+    <ConfirmationContext.Provider value={confirm}>
+      {children}
+      {request && (
+        <Modal title={request.title} onClose={() => finish(false)}>
+          <div className="confirmation-message">
+            <span
+              className={
+                "confirmation-icon" +
+                (request.destructive ? " destructive" : "")
+              }
+              aria-hidden="true"
+            >
+              <AlertTriangle size={20} />
+            </span>
+            <p>{request.message}</p>
+          </div>
+          <div className="modal-actions">
+            <button
+              type="button"
+              className="btn-outline"
+              onClick={() => finish(false)}
+            >
+              {request.cancelLabel}
+            </button>
+            <button
+              type="button"
+              className={request.destructive ? "btn-danger" : "btn-primary"}
+              onClick={() => finish(true)}
+            >
+              {request.confirmLabel}
+            </button>
+          </div>
+        </Modal>
+      )}
+    </ConfirmationContext.Provider>
+  );
+}
+
 const initialValue = (field) => {
   if (field.type === "files") return [];
   if (field.default !== undefined && field.default !== null) {
@@ -84,6 +165,7 @@ export function CreateModal({
   submitLabel = "Create",
   intro,
   initialValues = {},
+  disabled = false,
 }) {
   const [values, setValues] = useState(() =>
     Object.fromEntries(
@@ -170,6 +252,7 @@ export function CreateModal({
 
   const submit = async (event) => {
     event.preventDefault();
+    if (disabled) return;
 
     for (const field of fields) {
       if (
@@ -244,7 +327,7 @@ export function CreateModal({
                   type="file"
                   multiple
                   accept={field.accept || ".pdf,.doc,.docx,.txt"}
-                  disabled={busy}
+                  disabled={busy || disabled}
                   onChange={(event) =>
                     set(field.key, Array.from(event.target.files || []))
                   }
@@ -267,7 +350,7 @@ export function CreateModal({
                 rows={3}
                 placeholder={field.placeholder}
                 value={values[field.key] ?? ""}
-                disabled={busy}
+                disabled={busy || disabled}
                 onChange={(event) => set(field.key, event.target.value)}
               />
             ) : field.type === "select" ? (
@@ -275,7 +358,7 @@ export function CreateModal({
                 id={"f-" + field.key}
                 value={values[field.key] ?? ""}
                 required={isRequired(field)}
-                disabled={Boolean(field.disabled || busy)}
+                disabled={Boolean(field.disabled || busy || disabled)}
                 onChange={(event) => {
                   const value = event.target.value;
                   set(field.key, value);
@@ -303,7 +386,7 @@ export function CreateModal({
                 step={field.type === "number" ? "any" : undefined}
                 autoFocus={index === 0}
                 required={isRequired(field)}
-                disabled={busy}
+                disabled={busy || disabled}
                 placeholder={field.placeholder}
                 value={values[field.key] ?? ""}
                 onChange={(event) => set(field.key, event.target.value)}
@@ -331,7 +414,8 @@ export function CreateModal({
           <button
             type="submit"
             className="btn-primary"
-            disabled={busy}
+            disabled={busy || disabled}
+            title={disabled ? "You do not have permission to perform this action." : undefined}
           >
             {busy ? "Saving..." : submitLabel}
           </button>

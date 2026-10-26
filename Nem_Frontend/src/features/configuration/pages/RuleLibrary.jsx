@@ -10,7 +10,12 @@ import {
   X,
 } from "lucide-react";
 import { api } from "../../../services/api.js";
-import { CreateModal, EmptyState } from "../../../components/common/UI.jsx";
+import { useAuth } from "../../auth/AuthContext.jsx";
+import {
+  CreateModal,
+  EmptyState,
+  useConfirmation,
+} from "../../../components/common/UI.jsx";
 import "./RuleLibrary.css";
 
 const RULE_TYPES = [
@@ -498,6 +503,12 @@ function AssignmentModal({ template, onClose, onComplete }) {
 }
 
 export default function RuleLibrary() {
+  const { user } = useAuth();
+  const isAdministrator = user?.role === "Administrator";
+  const canCreateRules = isAdministrator || user?.role === "Supervisor";
+  const canEditRules = isAdministrator || user?.role === "Supervisor";
+  const canAssignRules = isAdministrator || user?.role === "Supervisor";
+  const confirm = useConfirmation();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -545,6 +556,7 @@ export default function RuleLibrary() {
   }, [templates, search, status]);
 
   const save = async (values) => {
+    if (editing ? !canEditRules : !canCreateRules) return;
     const payload = {
       ...(editing && !supportsCurrentRuleEditor(editing)
         ? legacyTemplatePayload(values, editing)
@@ -560,7 +572,16 @@ export default function RuleLibrary() {
   };
 
   const remove = async (template) => {
-    if (!window.confirm(`Delete the reusable rule “${template.name}”? Assigned asset rules will not be changed.`)) return;
+    if (
+      !(await confirm(
+        `Delete the reusable rule “${template.name}”? Assigned asset rules will not be changed.`,
+        {
+          title: "Delete reusable rule",
+          confirmLabel: "Delete",
+          destructive: true,
+        }
+      ))
+    ) return;
     setBusyId(template.id);
     setMessage({ text: "", error: false });
     try {
@@ -582,7 +603,7 @@ export default function RuleLibrary() {
           <h1 className="page-title">Monitoring Rule Library</h1>
           <p className="muted">Create reusable monitoring rules, then assign them to assets. Assigned rules start inactive.</p>
         </div>
-        <button className="btn-primary" onClick={() => { setEditing(null); setModalOpen(true); }}><Plus size={17} /> New rule</button>
+        <button className="btn-primary" onClick={() => { setEditing(null); setModalOpen(true); }} disabled={!canCreateRules} title={!canCreateRules ? "Only Administrators and Supervisors can create reusable rules." : undefined}><Plus size={17} /> New rule</button>
       </div>
 
       {message.text && <p className={"notice" + (message.error ? " error" : "")} role={message.error ? "alert" : "status"}>{message.text}</p>}
@@ -609,9 +630,9 @@ export default function RuleLibrary() {
                   <small>{displayType(template)} · {templateSummary(template)}</small>
                 </div>
                 <div className="rule-library-actions">
-                  <button className="btn-outline" onClick={() => setAssigning(template)} disabled={!template.is_enabled || needsRuntimeThresholdConfiguration(template)} title={needsRuntimeThresholdConfiguration(template) ? "Edit this rule and configure running-time thresholds before assigning it." : undefined}><Copy size={15} /> Assign rule</button>
-                  <button className="btn-outline" onClick={() => { setEditing(template); setModalOpen(true); }}><Pencil size={15} /> Edit</button>
-                  <button className="btn-outline danger" onClick={() => remove(template)} disabled={busyId === template.id}>{busyId === template.id ? "Deleting…" : <><Trash2 size={15} /> Delete</>}</button>
+                  <button className="btn-outline" onClick={() => setAssigning(template)} disabled={!canAssignRules || !template.is_enabled || needsRuntimeThresholdConfiguration(template)} title={!canAssignRules ? "You do not have permission to assign rules." : needsRuntimeThresholdConfiguration(template) ? "Edit this rule and configure running-time thresholds before assigning it." : undefined}><Copy size={15} /> Assign rule</button>
+                  <button className="btn-outline" onClick={() => { setEditing(template); setModalOpen(true); }} disabled={!canEditRules} title={!canEditRules ? "Only Administrators and Supervisors can edit reusable rules." : undefined}><Pencil size={15} /> Edit</button>
+                  <button className="btn-outline danger" onClick={() => remove(template)} disabled={busyId === template.id || !isAdministrator} title={!isAdministrator ? "Administrator access required to delete reusable rules." : undefined}>{busyId === template.id ? "Deleting…" : <><Trash2 size={15} /> Delete</>}</button>
                 </div>
               </article>
             ))}
@@ -634,6 +655,7 @@ export default function RuleLibrary() {
         initialValues={initialTemplate(editing)}
         submitLabel={editing ? "Save rule" : "Create rule"}
         onSubmit={save}
+        disabled={editing ? !canEditRules : !canCreateRules}
         onClose={() => { setModalOpen(false); setEditing(null); }}
       />}
       {assigning && <AssignmentModal

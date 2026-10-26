@@ -119,6 +119,41 @@
   border-color: var(--line-strong);
 }
 
+.asset-page .current-maintenance-list {
+  margin-top: 18px;
+}
+
+.asset-page .current-maintenance-heading {
+  margin: 18px 0 0;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.asset-page .rule-card.rule-row.current-maintenance-card {
+  height: auto;
+  min-height: 88px;
+  grid-template-columns: 5px minmax(0, 1fr) minmax(180px, .8fr) auto;
+}
+
+.asset-page .current-maintenance-card .sev {
+  min-height: 40px;
+}
+
+.asset-page .current-maintenance-card.completed .sev {
+  background: var(--ok);
+}
+
+.asset-page .current-maintenance-card.completed .badge {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.asset-page .current-maintenance-actions .btn-primary,
+.asset-page .current-maintenance-actions .btn-outline {
+  min-width: 110px;
+}
+
 .asset-page .rule-card .sev {
   min-height: 40px;
 }
@@ -282,6 +317,49 @@
   font-size: 12px;
 }
 
+.asset-page .maintenance-log-notes-head,
+.asset-page .event-log-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.asset-page .maintenance-log-notes-head > div,
+.asset-page .event-log-heading > div {
+  min-width: 0;
+}
+
+.asset-page .event-log-heading {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--line, #e5e7eb);
+}
+
+.asset-page .event-log-heading h2 {
+  margin: 0 0 3px;
+  color: var(--ink);
+  font-size: 17px;
+}
+
+.asset-page .event-log-heading .muted {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.asset-page .export-icon {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.asset-page .export-icon:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 .asset-page .maintenance-log-notes-panel .maintenance-delete-icon {
   display: inline-flex;
   width: 34px;
@@ -342,8 +420,8 @@
 }
 
 .asset-page .rule-toolbar > .dropdown:last-child > .menu.right {
-  right: auto;
-  left: 0;
+  right: 0;
+  left: auto;
 }
 
 .asset-page .rule-card-actions .btn-outline {
@@ -406,6 +484,11 @@
 }
 
 @container asset-detail (max-width: 700px) {
+  .asset-page .rule-toolbar > .dropdown:last-child > .menu.right {
+    right: auto;
+    left: 0;
+  }
+
   .asset-page .rule-card.rule-row {
     height: 96px;
     grid-template-columns: 5px minmax(0, .8fr) minmax(0, 1.2fr) auto;

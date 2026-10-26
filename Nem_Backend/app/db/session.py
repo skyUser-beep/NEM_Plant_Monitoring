@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import Generator # describes a function that yields values.
 
 from fastapi import Request
-from sqlalchemy import DateTime, Engine, create_engine
+from sqlalchemy import DateTime, Engine, create_engine, event
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.types import TypeDecorator
 
@@ -54,4 +54,7 @@ def create_session_factory(
 # this function provides a db session to FastAPI endpoints
 def get_db(request: Request) -> Generator[Session, None, None]:
     with request.app.state.session_factory() as session:
+        user_id = getattr(request.state, "auth_user_id", None)
+        if user_id is not None:
+            session.info["auth_user_id"] = user_id
         yield session

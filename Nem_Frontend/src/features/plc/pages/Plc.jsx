@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../../services/api.js";
+import { useAuth } from "../../auth/AuthContext.jsx";
 import {
   createLiveUpdateScheduler,
   subscribeLiveUpdates,
@@ -47,6 +48,8 @@ const barTone = (pct) => (pct >= 100 ? " bad" : pct >= 80 ? " warn" : "");
 
 export default function Plc() {
   const light = useAppTheme();
+  const { user } = useAuth();
+  const canManagePlc = user?.role === "Administrator";
   const [assets, setAssets] = useState([]);
   const [variables, setVariables] = useState([]);
   const [assetId, setAssetId] = useState("");
@@ -113,6 +116,11 @@ export default function Plc() {
 
 
   const loadMonitoringStatus = useCallback(async () => {
+    if (!canManagePlc) {
+      setMonitoringError("");
+      setMonitoringLoading(false);
+      return;
+    }
     if (monitoringRequest.current) return monitoringRequest.current;
 
     let request;
@@ -141,7 +149,7 @@ export default function Plc() {
 
     monitoringRequest.current = request;
     return request;
-  }, []);
+  }, [canManagePlc]);
 
   const refreshLiveData = useCallback(async () => {
     await Promise.all([loadMonitoringStatus(), loadLatestReadings()]);
@@ -303,6 +311,7 @@ export default function Plc() {
   }, [assetId]);
 
   const testConnection = async () => {
+    if (!canManagePlc) return;
     setBusy("test");
     setConnection({
       state: "testing",
@@ -331,6 +340,7 @@ export default function Plc() {
 
   const readNode = async (event) => {
     event.preventDefault();
+    if (!canManagePlc) return;
 
     setBusy("read");
     setReading("Reading this NodeId once…");
@@ -517,7 +527,7 @@ export default function Plc() {
           <button
             type="button"
             className="btn-outline"
-            disabled={monitoringLoading}
+            disabled={monitoringLoading || !canManagePlc}
             onClick={loadMonitoringStatus}
           >
             Refresh status
@@ -528,6 +538,11 @@ export default function Plc() {
           Monitoring status refreshes automatically every 1.5 seconds.
         </p>
 
+        {!canManagePlc && (
+          <p className="notice" role="status">
+            PLC connection status is restricted to Administrators. Assigned-asset readings remain available above.
+          </p>
+        )}
         {monitoringLoading && (
           <p className="muted" role="status">
             Loading PLC monitoring status…
@@ -754,7 +769,8 @@ export default function Plc() {
 
         <button
           className="btn-primary"
-          disabled={busy !== ""}
+          disabled={busy !== "" || !canManagePlc}
+          title={!canManagePlc ? "Only Administrators can test the global PLC connection." : undefined}
           onClick={testConnection}
         >
           {busy === "test"
@@ -783,12 +799,18 @@ export default function Plc() {
           monitoring rules. It does not start another collector.
         </p>
 
+        {!canManagePlc && (
+          <p className="notice" role="status">
+            Manual PLC reads are restricted to Administrators.
+          </p>
+        )}
         <form className="form" onSubmit={readNode}>
           <label className="field">
             PLC NodeId
             <input
               required
               maxLength={512}
+              disabled={!canManagePlc}
               value={nodeId}
               onChange={(event) => setNodeId(event.target.value)}
               placeholder='ns=3;s="OPC Lab DB"."DoughTemp"'
@@ -799,6 +821,7 @@ export default function Plc() {
             Asset
             <select
               required
+              disabled={!canManagePlc}
               value={assetId}
               onChange={(event) => setAssetId(event.target.value)}
             >
@@ -816,7 +839,7 @@ export default function Plc() {
               required
               value={variableId}
               onChange={(event) => setVariableId(event.target.value)}
-              disabled={!variables.length}
+              disabled={!canManagePlc || !variables.length}
             >
               {variables.map((variable) => (
                 <option key={variable.id} value={variable.id}>
@@ -831,6 +854,7 @@ export default function Plc() {
             Source label
             <input
               maxLength={200}
+              disabled={!canManagePlc}
               value={sourceId}
               onChange={(event) => setSourceId(event.target.value)}
             />
@@ -842,6 +866,7 @@ export default function Plc() {
               type="submit"
               disabled={
                 busy !== "" ||
+                !canManagePlc ||
                 !assets.length ||
                 !variables.length ||
                 !nodeId.trim()

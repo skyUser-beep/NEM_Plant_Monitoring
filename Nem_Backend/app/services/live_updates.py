@@ -1,6 +1,7 @@
+#Live update system for backend
 import asyncio
 from datetime import datetime, timezone
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 from uuid import uuid4
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -8,10 +9,11 @@ from sqlalchemy import event
 from sqlalchemy.orm import Session
 
 _CRITICAL_TABLES = {
-    "nem_alerts",
-    "nem_monitoring_events",
+    "nem_alerts", # alert records
+    "nem_monitoring_events", # monitoring events
 }
-_MAX_RETAINED_CRITICAL_EVENTS = 256
+_MAX_RETAINED_CRITICAL_EVENTS = 256 #Maximum number of critical events retained 
+#Tracking which db entities changed ,tells the code which IDs to collect for each table.
 _ENTITY_ID_ATTRIBUTES = {
     "assets": ("id",),
     "variables": ("id", "asset_id"),
@@ -27,7 +29,7 @@ _ENTITY_ID_ATTRIBUTES = {
     "nem_maintenance_schedules": ("id", "asset_id"),
 }
 
-
+#Think of it like a notification manager 
 class LiveUpdateHub:
     def __init__(self) -> None:
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -40,7 +42,7 @@ class LiveUpdateHub:
 
     def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         self._loop = loop
-
+#Connecting the frontend to live updates
     def subscribe(self) -> asyncio.Queue[dict[str, Any]]:
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(maxsize=32)
         self._subscribers.add(queue)
@@ -50,9 +52,7 @@ class LiveUpdateHub:
     def unsubscribe(self, queue: asyncio.Queue[dict[str, Any]]) -> None:
         self._subscribers.discard(queue)
 
-    def add_database_change_listener(
-        self, listener: Callable[[set[str]], None]
-    ) -> None:
+    def add_database_change_listener(self, listener: Callable[[set[str]], None]) -> None:
         self._database_change_listeners.add(listener)
 
     def publish_from_session(
@@ -82,9 +82,7 @@ class LiveUpdateHub:
             self._pending_entity_ids.setdefault(table, set()).update(identifiers)
         if self._flush_handle is None:
             assert self._loop is not None
-            self._flush_handle = self._loop.call_later(
-                0.15, self._flush_database_changes
-            )
+            self._flush_handle = self._loop.call_later(0.15, self._flush_database_changes)
 
     def _flush_database_changes(self) -> None:
         self._flush_handle = None
@@ -233,9 +231,18 @@ event.listen(Session, "after_flush", _collect_changed_tables)
 event.listen(Session, "after_commit", _publish_committed_changes)
 event.listen(Session, "after_rollback", _discard_rolled_back_changes)
 
-
-async def serve_live_updates(websocket: WebSocket, hub: LiveUpdateHub) -> None:
-    await websocket.accept()
+#Keeping the Websocket alive
+# This is the WebSocket handler that serves connected clients
+async def serve_live_updates(
+    websocket: WebSocket,
+    hub: LiveUpdateHub,
+    *,
+    authorized_asset_ids: set[int] | None = None,
+    authorization_check: Callable[
+        [], Awaitable[tuple[bool, set[int] | None]]
+    ] | None = None,
+) -> None:
+    await websocket.accept(subprotocol="nem-auth" if "nem-auth" in websocket.scope.get("subprotocols", []) else None)
     queue = hub.subscribe()
 
     async def receive_until_disconnected() -> None:
@@ -249,6 +256,54 @@ async def serve_live_updates(websocket: WebSocket, hub: LiveUpdateHub) -> None:
                 update = await asyncio.wait_for(queue.get(), timeout=25)
             except asyncio.TimeoutError:
                 update = hub._event("heartbeat")
+            if authorization_check is not None:
+                authorized, authorized_asset_ids = await authorization_check()
+                if not authorized:
+                    await websocket.close(code=1008, reason="Session is invalid or expired")
+                    return
+            if authorized_asset_ids is not None:
+                if update["type"] == "database_change":
+                    visible_asset_ids = (set(update.get("asset_ids", ())) & authorized_asset_ids)
+                    if visible_asset_ids:
+                        update = {
+                            **update,
+                            "asset_ids": sorted(visible_asset_ids),
+                            "entity_ids": {},
+                            "critical_events": [],
+                        }
+                    elif update.get("resync_required"):
+                        update = {
+                            "type": "database_change",
+                            "asset_ids": [],
+                            "changed_tables": [],
+                            "entity_ids": {},
+                            "critical_events": [],
+                            "resync_required": True,
+                        }
+                    else:
+                        continue
+                elif update["type"] == "opcua_status":
+                    if not update.get("resync_required"):
+                        continue
+                    update = {
+                        "type": "database_change",
+                        "asset_ids": [],
+                        "changed_tables": [],
+                        "entity_ids": {},
+                        "critical_events": [],
+                        "resync_required": True,
+                    }
+                elif update.get("resync_required"):
+                    update = {
+                        "type": "database_change",
+                        "asset_ids": [],
+                        "changed_tables": [],
+                        "entity_ids": {},
+                        "critical_events": [],
+                        "resync_required": True,
+                    }
+                elif update["type"] not in {"connected", "heartbeat"}:
+                    continue
             await websocket.send_json(update)
     except WebSocketDisconnect:
         pass
@@ -256,3 +311,5 @@ async def serve_live_updates(websocket: WebSocket, hub: LiveUpdateHub) -> None:
         receiver.cancel()
         await asyncio.gather(receiver, return_exceptions=True)
         hub.unsubscribe(queue)
+
+#Bridge between the db changes and live frontend 

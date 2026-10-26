@@ -13,12 +13,14 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy import delete, select
 from starlette.middleware.cors import CORSMiddleware
 from starlette.staticfiles import StaticFiles
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api.routes import (
     assets,
+    auth,
     dashboard,
     frontend_compat,
     maintenance,
@@ -28,6 +30,8 @@ from app.api.routes import (
     rules,
     variables,
 )
+from app.models import AuthSession, User
+from app.services.auth_security import hash_session_token
 from app.core.config import Settings, get_settings
 from app.db.init_db import initialize_database
 from app.db.session import create_database_engine, create_session_factory
@@ -183,6 +187,161 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.state.opcua_collector = opcua_collector
     application.state.live_updates = live_updates
 
+    @application.middleware("http")
+    async def authenticate_api_request(request: Request, call_next):
+        path = request.url.path
+        policy_path = "/api/v1/plc/test" if path == "/plc/test" else path
+        if not policy_path.startswith("/api/v1/") or policy_path in {
+            "/api/v1/health",
+            "/api/v1/ready",
+            "/api/v1/auth/login",
+        }:
+            return await call_next(request)
+
+        authorization = request.headers.get("authorization", "")
+        scheme, _, token = authorization.partition(" ")
+        if scheme.casefold() != "bearer" or not token.strip():
+            return JSONResponse(
+                status_code=401,
+                content={"detail": "Authentication required"},
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        token_hash = hash_session_token(token.strip())
+        with session_factory() as db:
+            auth_session = db.scalar(
+                select(AuthSession).where(AuthSession.token_hash == token_hash)
+            )
+            now = utc_now()
+            user = auth_session.user if auth_session is not None else None
+            if (
+                auth_session is None
+                or auth_session.expires_at <= now
+                or user is None
+                or not user.is_active
+            ):
+                if auth_session is not None and auth_session.expires_at <= now:
+                    db.delete(auth_session)
+                    db.commit()
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Session is invalid or expired"},
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
+            role = user.role
+            request.state.auth_user_id = user.id
+            request.state.auth_token_hash = token_hash
+
+        method = request.method.upper()
+        safe_method = method in {"GET", "HEAD", "OPTIONS"}
+        admin_only_read_paths = (
+            "/api/v1/auth/users",
+            "/api/v1/plc",
+            "/api/v1/collections",
+            "/api/v1/import",
+            "/api/v1/settings",
+            "/api/v1/backups",
+            "/api/v1/usage",
+        )
+        supervisor_content_create = (
+            role == "Supervisor"
+            and method == "POST"
+            and policy_path in {
+                "/api/v1/rule-templates",
+                "/api/v1/documents",
+                "/api/v1/documents/with-files",
+            }
+        )
+        supervisor_rule_template_update = (
+            role == "Supervisor"
+            and method == "PUT"
+            and policy_path.startswith("/api/v1/rule-templates/")
+            and len(policy_path.rstrip("/").split("/")) == 5
+        )
+        supervisor_plc_status_read = (
+            role == "Supervisor"
+            and method in {"GET", "HEAD"}
+            and policy_path == "/api/v1/plc/status"
+        )
+        admin_only_write = (
+            (policy_path == "/api/v1/assets" and not safe_method)
+            or policy_path.startswith("/api/v1/assets/")
+            and not any(segment in policy_path for segment in ("/rules", "/logbook"))
+            and method in {"PATCH", "DELETE"}
+            or policy_path.startswith("/api/v1/variables")
+            or policy_path.startswith("/api/v1/plc")
+            or policy_path.startswith("/api/v1/rule-templates")
+            and not (
+                (role == "Supervisor" and method == "POST" and policy_path.endswith("/assign"))
+                or supervisor_content_create
+                or supervisor_rule_template_update
+            )
+            or policy_path.startswith("/api/v1/collections")
+            or policy_path.startswith("/api/v1/documents")
+            or policy_path.startswith("/api/v1/import")
+            or policy_path.startswith("/api/v1/settings")
+            or policy_path.startswith("/api/v1/backups")
+            or policy_path.startswith("/api/v1/usage")
+            or policy_path == "/api/v1/monitoring/evaluate"
+            or policy_path.startswith("/api/v1/readings") and not safe_method
+        )
+        if (
+            role != "Administrator"
+            and policy_path.startswith(admin_only_read_paths)
+            and policy_path != "/api/v1/auth/logout"
+            and not supervisor_plc_status_read
+        ):
+            return JSONResponse(status_code=403,content={"detail": "Administrator permissions required"},)
+        supervisor_write_paths = (
+            (
+                policy_path.startswith("/api/v1/maintenance")
+                or policy_path.startswith("/api/v1/rules")
+            )
+            and method in {"POST", "PATCH", "DELETE"}
+            and not policy_path.endswith("/permanent")
+            or policy_path.startswith("/api/v1/assets/")
+            and ("/rules" in policy_path or "/logbook" in policy_path)
+            and method in {"POST", "PATCH", "DELETE"}
+            and not policy_path.endswith("/permanent")
+            or policy_path.startswith("/api/v1/alerts/")
+            and method == "POST"
+            and policy_path.endswith(("/acknowledge", "/complete"))
+            or policy_path.startswith("/api/v1/rule-templates/")
+            and method == "POST"
+            and policy_path.endswith("/assign")
+            or supervisor_content_create
+            or supervisor_rule_template_update
+        )
+        if (
+            role == "Supervisor"
+            and not safe_method
+            and policy_path != "/api/v1/auth/logout"
+            and (
+                (
+                    admin_only_write
+                    and not supervisor_content_create
+                    and not supervisor_rule_template_update
+                )
+                or not supervisor_write_paths
+            )
+        ):
+            return JSONResponse(status_code=403,content={"detail": "This action is not available to supervisors"},)
+        if (
+            role == "Operator"
+            and not safe_method
+            and policy_path != "/api/v1/auth/logout"
+        ):
+            operator_acknowledge = (
+                policy_path.startswith("/api/v1/alerts/")
+                and method == "POST"
+                and policy_path.endswith(("/acknowledge", "/complete"))
+            )
+            if admin_only_write or not operator_acknowledge:
+                return JSONResponse(status_code=403,content={"detail": "Operators may only acknowledge alerts or complete a resolved alert"},)
+
+        return await call_next(request)
+
     @application.websocket("/api/v1/live")
     @application.websocket("/api/v1/ws/live")
     async def live_updates_websocket(websocket: WebSocket) -> None:
@@ -193,9 +352,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             except ValueError:
                 await websocket.close(code=1008, reason="Origin is not allowed")
                 return
-            same_origin = parsed_origin.netloc.casefold() == (
-                websocket.headers.get("host", "").casefold()
-            )
+            same_origin = parsed_origin.netloc.casefold() == (websocket.headers.get("host", "").casefold())
             configured_origin = origin.rstrip("/") in {
                 configured.rstrip("/")
                 for configured in selected_settings.allowed_origins
@@ -203,7 +360,53 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if not same_origin and not configured_origin:
                 await websocket.close(code=1008, reason="Origin is not allowed")
                 return
-        await serve_live_updates(websocket, live_updates)
+        offered_protocols = websocket.scope.get("subprotocols", [])
+        token = next(
+            (
+                protocol.removeprefix("nem-auth.")
+                for protocol in offered_protocols
+                if protocol.startswith("nem-auth.")
+            ),
+            "",
+        )
+        if not token:
+            await websocket.close(code=1008, reason="Authentication required")
+            return
+        with session_factory() as db:
+            auth_session = db.scalar(select(AuthSession).where(AuthSession.token_hash == hash_session_token(token)))
+            user = auth_session.user if auth_session is not None else None
+            if (
+                auth_session is None
+                or auth_session.expires_at <= utc_now()
+                or user is None
+                or not user.is_active
+            ):
+                await websocket.close(code=1008, reason="Session is invalid or expired")
+                return
+        async def reauthorize_socket() -> tuple[bool, set[int] | None]:
+            def read_current_access() -> tuple[bool, set[int] | None]:
+                with session_factory() as db:
+                    current_session = db.scalar(
+                        select(AuthSession).where(AuthSession.token_hash == hash_session_token(token))
+                    )
+                    current_user = (current_session.user if current_session is not None else None)
+                    if (
+                        current_session is None
+                        or current_session.expires_at <= utc_now()
+                        or current_user is None
+                        or not current_user.is_active
+                    ):
+                        return False, None
+                    return True, None
+
+            return await asyncio.to_thread(read_current_access)
+
+        await serve_live_updates(
+            websocket,
+            live_updates,
+            authorized_asset_ids=None,
+            authorization_check=reauthorize_socket,
+        )
 
 #Checking request size
     @application.middleware("http")
@@ -212,10 +415,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if content_length is not None:
             try:
                 if int(content_length) > MAX_REQUEST_BODY_BYTES:
-                    return JSONResponse(status_code=413,
-                        content={"error": {
-                                "message": "Request body is too large",
-                                "code": 413,
+                    return JSONResponse(status_code=413,content={"error": {"message": "Request body is too large","code": 413,
                             }
                         },
                     )
@@ -253,9 +453,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     for key, value in ctx.items()
                 }
             details.append(clean_item)
-        return JSONResponse(status_code=422,
-            content={"error": { "message": "Request validation failed",
-                    "code": 422,"details": details,
+        return JSONResponse(status_code=422,content={"error": { "message": "Request validation failed", "code": 422,"details": details,
                 }
             },
         )
@@ -263,11 +461,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @application.exception_handler(StarletteHTTPException)
     async def http_exception_handler(request: Request,error: StarletteHTTPException,) -> JSONResponse:
         if error.status_code == 413:
-            return JSONResponse(status_code=413,
-                content={
-                    "error": {
-                        "message": "Request body is too large",
-                        "code": 413,
+            return JSONResponse(status_code=413,content={"error": {"message": "Request body is too large","code": 413,
                     }
                 },
             )
@@ -282,10 +476,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 session.execute(text("SELECT 1"))
         except SQLAlchemyError:
             LOGGER.exception("Database health check failed")
-            return JSONResponse(status_code=503,
-                content={
-                    "status": "degraded",
-                    "database": "disconnected",
+            return JSONResponse(status_code=503,content={"status": "degraded","database": "disconnected",
                 },
             )
         return JSONResponse(content={"status": "ok", "database": "connected"})
@@ -304,6 +495,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return JSONResponse(status_code=503,content={"status": "degraded", "database": "disconnected"},)
         return JSONResponse(content={"status": "ready", "database": "connected"})
 
+    application.include_router(auth.router, prefix="/api/v1")
     application.include_router(frontend_compat.router, prefix="/api/v1")
     application.include_router(assets.router, prefix="/api/v1")
     application.include_router(variables.router, prefix="/api/v1")

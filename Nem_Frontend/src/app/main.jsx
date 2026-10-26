@@ -2,6 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import App from "./App.jsx";
+import { AuthProvider } from "../features/auth/AuthContext.jsx";
 import "../styles/global.css";
 
 
@@ -18,7 +19,9 @@ class ErrorBoundary extends React.Component {
 ReactDOM.createRoot(document.getElementById("root")).render(
   <ErrorBoundary>
     <BrowserRouter basename="/ui">
-      <App />
+      <AuthProvider>
+        <App />
+      </AuthProvider>
     </BrowserRouter>
   </ErrorBoundary>
 );
