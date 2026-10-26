@@ -612,7 +612,7 @@ const openEdit = (record) => {
         record.schedule_id != null &&
         (record.status === "in_progress" ||
           (record.status === "planned" &&
-            record.planned_due_date === today))
+            record.planned_due_date <= today))
       )
   );
   const renderRecordCard = (record) => (

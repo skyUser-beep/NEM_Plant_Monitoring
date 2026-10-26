@@ -20,10 +20,12 @@ export default function CurrentMaintenanceCards({
   assetId,
   onChanged,
   onCompleted,
+  onCompletedRecordsCount,
   showCompleted = false,
 }) {
   const { user } = useAuth();
   const canManageMaintenance = ["Administrator", "Supervisor"].includes(user?.role);
+  const canOperateDueMaintenance = user?.role === "Operator";
   const [records, setRecords] = useState([]);
   const [completedRecords, setCompletedRecords] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -43,12 +45,12 @@ export default function CurrentMaintenanceCards({
         maintenanceRecords.map((record) => [record.id, record])
       );
       const today = todayDateInput();
-      setCompletedRecords(
-        maintenanceRecords.filter(
-          (record) =>
-            record.schedule_id != null && record.status === "completed"
-        )
+      const completedScheduledRecords = maintenanceRecords.filter(
+        (record) =>
+          record.schedule_id != null && record.status === "completed"
       );
+      setCompletedRecords(completedScheduledRecords);
+      onCompletedRecordsCount?.(completedScheduledRecords.length);
       setRecords(
         schedules
           .filter(
@@ -62,7 +64,7 @@ export default function CurrentMaintenanceCards({
               record &&
               (record.status === "in_progress" ||
                 (record.status === "planned" &&
-                  record.planned_due_date === today))
+                  record.planned_due_date <= today))
           )
       );
     } catch (loadError) {
@@ -70,14 +72,18 @@ export default function CurrentMaintenanceCards({
     } finally {
       setLoading(false);
     }
-  }, [assetId]);
+  }, [assetId, onCompletedRecordsCount]);
 
   useEffect(() => {
     loadCurrentMaintenance();
   }, [loadCurrentMaintenance]);
 
   const startMaintenance = async (record) => {
-    if (!canManageMaintenance) return;
+    if (
+      !canManageMaintenance &&
+      !(canOperateDueMaintenance && record.schedule_id != null &&
+        record.planned_due_date <= todayDateInput())
+    ) return;
     if (startingRecordId !== null) return;
     setStartingRecordId(record.id);
     setError("");
@@ -96,7 +102,11 @@ export default function CurrentMaintenanceCards({
   };
 
   const completeMaintenance = async (record) => {
-    if (!canManageMaintenance) return;
+    if (
+      !canManageMaintenance &&
+      !(canOperateDueMaintenance && record.schedule_id != null &&
+        record.planned_due_date <= todayDateInput())
+    ) return;
     if (completingRecordId !== null) return;
     setCompletingRecordId(record.id);
     setError("");
@@ -137,6 +147,10 @@ export default function CurrentMaintenanceCards({
         {displayedRecords.map((record) => {
           const inProgress = record.status === "in_progress";
           const completed = record.status === "completed";
+          const overdue =
+            !completed &&
+            record.status === "planned" &&
+            record.planned_due_date < todayDateInput();
           return (
             <article
               className={`rule-card rule-row current-maintenance-card ${completed ? "completed" : inProgress ? "in-progress" : "due"}`}
@@ -151,7 +165,13 @@ export default function CurrentMaintenanceCards({
               </div>
               <div className="rule-evaluation">
                 <span className="badge">
-                  {completed ? "Completed" : inProgress ? "In progress" : "Due today"}
+                  {completed
+                    ? "Completed"
+                    : inProgress
+                      ? "In progress"
+                      : overdue
+                        ? "Overdue"
+                        : "Due today"}
                 </span>
                 <small>
                   {displayDate(record.planned_due_date)}
@@ -174,8 +194,21 @@ export default function CurrentMaintenanceCards({
                     type="button"
                     className="btn-primary"
                     onClick={() => startMaintenance(record)}
-                    disabled={startingRecordId !== null || !canManageMaintenance}
-                    title={!canManageMaintenance ? "You do not have permission to start maintenance." : undefined}
+                    disabled={
+                      startingRecordId !== null ||
+                      (!canManageMaintenance &&
+                        !(canOperateDueMaintenance &&
+                          record.schedule_id != null &&
+                          record.planned_due_date <= todayDateInput()))
+                    }
+                    title={
+                      !canManageMaintenance &&
+                      !(canOperateDueMaintenance &&
+                        record.schedule_id != null &&
+                        record.planned_due_date <= todayDateInput())
+                        ? "Operators can start scheduled maintenance due today or overdue."
+                        : undefined
+                    }
                   >
                     {startingRecordId === record.id ? "Starting…" : "Start"}
                   </button>
@@ -222,8 +255,21 @@ export default function CurrentMaintenanceCards({
                 type="button"
                 className="btn-primary"
                 onClick={() => completeMaintenance(selectedRecord)}
-                disabled={completingRecordId !== null || !canManageMaintenance}
-                title={!canManageMaintenance ? "You do not have permission to complete maintenance." : undefined}
+                disabled={
+                  completingRecordId !== null ||
+                  (!canManageMaintenance &&
+                    !(canOperateDueMaintenance &&
+                      selectedRecord.schedule_id != null &&
+                      selectedRecord.planned_due_date <= todayDateInput()))
+                }
+                title={
+                  !canManageMaintenance &&
+                  !(canOperateDueMaintenance &&
+                    selectedRecord.schedule_id != null &&
+                    selectedRecord.planned_due_date <= todayDateInput())
+                    ? "Operators can complete scheduled maintenance due today or overdue."
+                    : undefined
+                }
               >
                 {completingRecordId === selectedRecord.id
                   ? "Completing…"

@@ -337,8 +337,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 and method == "POST"
                 and policy_path.endswith(("/acknowledge", "/complete"))
             )
-            if admin_only_write or not operator_acknowledge:
-                return JSONResponse(status_code=403,content={"detail": "Operators may only acknowledge alerts or complete a resolved alert"},)
+            policy_segments = policy_path.split("/")
+            operator_maintenance_action = (
+                method == "POST"
+                and len(policy_segments) == 6
+                and policy_segments[:4] == ["", "api", "v1", "maintenance"]
+                and policy_segments[4].isdecimal()
+                and policy_segments[5] in {"start", "complete"}
+            )
+            if admin_only_write or not (
+                operator_acknowledge or operator_maintenance_action
+            ):
+                return JSONResponse(
+                    status_code=403,
+                    content={
+                        "detail": (
+                            "Operators may acknowledge or complete resolved alerts, "
+                            "or start and complete scheduled maintenance due today or overdue."
+                        )
+                    },
+                )
 
         return await call_next(request)
 

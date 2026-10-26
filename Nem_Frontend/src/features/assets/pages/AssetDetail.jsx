@@ -486,6 +486,7 @@ export default function AssetDetail() {
   );
   const [list, setList] = useState("activated");
   const [rules, setRules] = useState([]);
+  const [completedMaintenanceCount, setCompletedMaintenanceCount] = useState(0);
   const rulesRef = useRef(rules);
   rulesRef.current = rules;
   const [variables, setVariables] = useState([]);
@@ -539,6 +540,9 @@ export default function AssetDetail() {
   const [exporting, setExporting] = useState(false);
 
   const seq = useRef(0);
+  const ruleListSeq = useRef(0);
+  const ruleStatusSeq = useRef(0);
+  const plcStatusSeq = useRef(0);
   const bulkRequest = useRef(false);
   const permanentDeleteRequest = useRef(false);
 
@@ -576,7 +580,10 @@ export default function AssetDetail() {
     includeRuleList = true,
     includePlcStatus = true,
   } = {}) => {
-    const mine = ++seq.current;
+    const generation = seq.current;
+    const ruleRequest = includeRuleList ? ++ruleListSeq.current : null;
+    const statusRequest = ++ruleStatusSeq.current;
+    const plcRequest = includePlcStatus ? ++plcStatusSeq.current : null;
 
     try {
       const [r, st, plc] = await Promise.allSettled([
@@ -587,14 +594,15 @@ export default function AssetDetail() {
         includePlcStatus ? api.get("/plc/status") : Promise.resolve(null),
       ]);
 
-      if (mine !== seq.current) return;
+      if (generation !== seq.current) return;
 
-      if (!includeRuleList || r.status === "fulfilled") {
-        const loadedRules = includeRuleList
-          ? Array.isArray(r.value) ? r.value : []
-          : rulesRef.current;
-        if (includeRuleList) setRules(loadedRules);
-        setLoadError("");
+      if (
+        includeRuleList &&
+        ruleRequest === ruleListSeq.current &&
+        r.status === "fulfilled"
+      ) {
+        const loadedRules = Array.isArray(r.value) ? r.value : [];
+        setRules(loadedRules);
         const runtimeRules = loadedRules.filter((rule) =>
           rule.rule_type === "runtime_duration"
         );
@@ -611,16 +619,27 @@ export default function AssetDetail() {
             }
           })
         );
-        if (mine !== seq.current) return;
-        setRuntimeReadings(new Map(signalReadings));
-      } else if (r.status === "rejected") {
-        setRules([]);
+        if (
+          generation === seq.current &&
+          ruleRequest === ruleListSeq.current
+        ) {
+          setRuntimeReadings(new Map(signalReadings));
+          setLoadError("");
+        }
+      } else if (
+        includeRuleList &&
+        ruleRequest === ruleListSeq.current &&
+        r.status === "rejected"
+      ) {
         setLoadError(
           r.reason?.message || "Unable to load rules."
         );
       }
 
-      if (st.status === "fulfilled") {
+      if (
+        statusRequest === ruleStatusSeq.current &&
+        st.status === "fulfilled"
+      ) {
         setRuleStates(
           new Map(
             (Array.isArray(st.value) ? st.value : []).map(
@@ -630,7 +649,11 @@ export default function AssetDetail() {
         );
       }
 
-      if (includePlcStatus && plc.status === "fulfilled") {
+      if (
+        includePlcStatus &&
+        plcRequest === plcStatusSeq.current &&
+        plc.status === "fulfilled"
+      ) {
         const mappings = Array.isArray(plc.value?.mappings)
           ? plc.value.mappings
           : [];
@@ -659,7 +682,9 @@ export default function AssetDetail() {
         );
       }
     } catch (error) {
-      setLoadError(error.message || "Unable to refresh asset monitoring.");
+      if (generation === seq.current) {
+        setLoadError(error.message || "Unable to refresh asset monitoring.");
+      }
     }
   }, [assetId, children]);
 
@@ -982,7 +1007,7 @@ useEffect(() => {
 
   const isAct = (rule) => rule.state === "activated";
   const nAct = rules.filter(isAct).length;
-  const nNot = rules.length - nAct;
+  const nNot = rules.length - nAct + completedMaintenanceCount;
 
   let shown = rules
     .filter((rule) =>
@@ -2107,6 +2132,7 @@ const filteredEvents = [...events]
           <CurrentMaintenanceCards
             assetId={assetId}
             onChanged={refreshMaintenanceData}
+            onCompletedRecordsCount={setCompletedMaintenanceCount}
             onCompleted={() => setList("not_activated")}
             showCompleted={list === "not_activated"}
           />

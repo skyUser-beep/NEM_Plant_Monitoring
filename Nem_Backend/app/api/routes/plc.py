@@ -41,8 +41,7 @@ def plc_monitoring_status(request: Request,session: Session = Depends(get_db),) 
         last_notification_at is None
         or (
             datetime.now(timezone.utc) - last_notification_at
-        ).total_seconds()
-        > request.app.state.settings.monitoring_default_stale_after_seconds
+        ).total_seconds()> request.app.state.settings.monitoring_default_stale_after_seconds
     )
     connection["stale_after_seconds"] = (request.app.state.settings.monitoring_default_stale_after_seconds)
     connection["requested_publishing_interval_ms"] = (request.app.state.settings.opcua_subscription_publishing_interval_ms)

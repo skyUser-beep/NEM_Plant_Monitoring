@@ -69,9 +69,7 @@ ALLOWED_DOCUMENT_EXTENSIONS = {".pdf", ".doc", ".docx", ".txt"}
 class CollectionCreate(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     description: str | None = None
-    rules: list[RuleTemplateCreate] | None = Field(
-        default=None, min_length=1, max_length=5
-    )
+    rules: list[RuleTemplateCreate] | None = Field(default=None, min_length=1, max_length=5)
 
     @field_validator("name")
     @classmethod
@@ -245,10 +243,7 @@ def frontend_rules_by_lifecycle(
 ) -> list[dict[str, Any]]:
     allowed_statuses = {"in_progress", "suspended", "deactivated", "completed"}
     if lifecycle_status not in allowed_statuses:
-        raise HTTPException(
-            status_code=422,
-            detail="Rule lifecycle status must be in_progress, suspended, deactivated, or completed",
-        )
+        raise HTTPException(status_code=422,detail="Rule lifecycle status must be in_progress, suspended, deactivated, or completed",)
     rules = session.scalars(
         select(MonitoringRule)
         .where(
@@ -316,8 +311,7 @@ def _mapped_variable(
         )
     ).all()
     if len(matches) != 1:
-        raise HTTPException(status_code=422,detail=(f"Rule variable '{source.key}' must have exactly one active variable with the same key and data type on the target asset"),
-        )
+        raise HTTPException(status_code=422,detail=(f"Rule variable '{source.key}' must have exactly one active variable with the same key and data type on the target asset"),)
     return matches[0]
 
 def _rule_definition(

@@ -5,6 +5,7 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
+from app.api.routes.auth import get_current_user
 from app.models import (
     Alert,
     Asset,
@@ -13,6 +14,7 @@ from app.models import (
     MaintenanceRecord,
     MaintenanceSchedule,
     MonitoringEvent,
+    User,
 )
 from app.schemas.maintenance import (
     MaintenanceCreate,
@@ -34,6 +36,38 @@ def _schedule_or_404(session: Session, schedule_id: int) -> MaintenanceSchedule:
     if schedule is None:
         raise HTTPException(status_code=404,detail=f"Maintenance schedule {schedule_id} was not found",)
     return schedule
+
+
+def _authorize_operator_due_occurrence(
+    session: Session,
+    record: MaintenanceRecord,
+    user: User,
+    *,
+    action: str,
+) -> None:
+    if user.role != "Operator":
+        return
+    if (
+        record.schedule_id is None
+        or record.planned_due_date is None
+        or record.planned_due_date > utc_now().date()
+        or (action == "complete" and record.status != "in_progress")
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Operators may only start or complete scheduled maintenance due today or overdue.",
+        )
+    schedule = _schedule_or_404(session, record.schedule_id)
+    if (
+        schedule.current_occurrence_id != record.id
+        or schedule.current_due_date != record.planned_due_date
+        or schedule.status != "active"
+        or schedule.approval_status == "pending"
+    ):
+        raise HTTPException(
+            status_code=403,
+            detail="Operators may only start or complete the active maintenance occurrence due today or overdue.",
+        )
 
 # This prepares a db schedule for the frontend
 def _validate_instruction_documents(
@@ -950,8 +984,12 @@ def update_maintenance_record(
 def start_maintenance_record(
     record_id: int,
     session: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> MaintenanceRecord:
     record = _record_or_404(session, record_id)
+    _authorize_operator_due_occurrence(
+        session, record, user, action="start"
+    )
     if record.status != "planned":
         raise HTTPException(
             status_code=409,
@@ -974,6 +1012,7 @@ def start_maintenance_record(
 def complete_maintenance_record(
     record_id: int,
     session: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> MaintenanceRecord:
     record = session.scalar(
         select(MaintenanceRecord)
@@ -982,6 +1021,9 @@ def complete_maintenance_record(
     )
     if record is None:
         raise HTTPException(status_code=404,detail=f"Maintenance record {record_id} was not found",)
+    _authorize_operator_due_occurrence(
+        session, record, user, action="complete"
+    )
     if record.status in {"completed", "cancelled"}:
         raise HTTPException(status_code=409,detail="Completed or cancelled maintenance cannot be completed",)
     completed_at = record.actual_completed_at or utc_now()
