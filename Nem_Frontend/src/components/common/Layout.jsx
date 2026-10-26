@@ -325,13 +325,23 @@ export default function Layout() {
 
   const assets = useMemo(() => {
     const ruleCount = new Map();
+    const assetsById = new Map(rawAssets.map((asset) => [asset.id, asset]));
 
     for (const rule of rules) {
-      if (rule.target_asset_id != null) {
+      if (!rule.is_enabled || rule.target_asset_id == null) continue;
+
+      let currentAssetId = rule.target_asset_id;
+      const visited = new Set();
+      while (currentAssetId != null && !visited.has(currentAssetId)) {
+        visited.add(currentAssetId);
+        const currentAsset = assetsById.get(currentAssetId);
+        if (!currentAsset) break;
+
         ruleCount.set(
-          rule.target_asset_id,
-          (ruleCount.get(rule.target_asset_id) || 0) + 1
+          currentAssetId,
+          (ruleCount.get(currentAssetId) || 0) + 1
         );
+        currentAssetId = currentAsset.parent_asset_id;
       }
     }
 
@@ -341,7 +351,7 @@ export default function Layout() {
       status: asset.is_active ? "enabled" : "disabled",
       health: health.get(asset.id) || (asset.is_active ? "ok" : "off"),
       rule_count: ruleCount.get(asset.id) || 0,
-      has_rules: ruleCount.has(asset.id),
+      has_rules: (ruleCount.get(asset.id) || 0) > 0,
     }));
   }, [rawAssets, rules, health]);
 

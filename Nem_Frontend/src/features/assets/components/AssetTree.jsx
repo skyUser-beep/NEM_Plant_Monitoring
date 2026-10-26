@@ -150,9 +150,9 @@ export default function AssetTree({ assets = [], selectedId, onRefresh }) {
           {asset.rule_count > 0 && (
             <span
               className="tree-count"
-              title={`${asset.rule_count} monitoring rule${
+              title={`${asset.rule_count} active monitoring rule${
                 asset.rule_count === 1 ? "" : "s"
-              }`}
+              } in this asset and its child assets`}
             >
               {asset.rule_count}
             </span>
