@@ -61,9 +61,7 @@ def to_tree(session: Session, asset: Asset, ancestors: frozenset[int] = frozense
     if asset.id in ancestors:
         raise HTTPException(status_code=409, detail="Existing asset hierarchy contains a cycle")
     next_ancestors = ancestors | {asset.id}
-    children = session.scalars(
-        select(Asset).where(Asset.parent_asset_id == asset.id).order_by(Asset.id)
-    ).all()
+    children = session.scalars(select(Asset).where(Asset.parent_asset_id == asset.id).order_by(Asset.id)).all()
     return AssetTree(
         **AssetRead.model_validate(asset).model_dump(),
         children=[to_tree(session, child, next_ancestors) for child in children],
@@ -120,9 +118,7 @@ def get_asset(asset_id: int, session: Session = Depends(get_db)) -> Asset:
 
 #Updating the assets
 @router.patch("/{asset_id}", response_model=AssetRead)
-def update_asset(
-    asset_id: int, payload: AssetUpdate, session: Session = Depends(get_db)
-) -> Asset:
+def update_asset(asset_id: int, payload: AssetUpdate, session: Session = Depends(get_db)) -> Asset:
     asset = asset_or_404(session, asset_id)
     changes = payload.model_dump(exclude_unset=True)
     if not changes:
@@ -173,8 +169,7 @@ def asset_hierarchy(asset_id: int, session: Session = Depends(get_db)) -> AssetT
 
 # Moving an asset to a new parent asset, validating the new parent to ensure it doesn't create a circular hierarchy, and returning the updated asset.
 @router.post("/{asset_id}/move", response_model=AssetRead)
-def move_asset(
-    asset_id: int,
+def move_asset(asset_id: int,
     parent_asset_id: int | None = None,
     session: Session = Depends(get_db),
 ) -> Asset:
@@ -201,23 +196,17 @@ def delete_asset(asset_id: int, session: Session = Depends(get_db)) -> Response:
         (MachineMonitoringState, MachineMonitoringState.asset_id),
         (RuleCounterState, RuleCounterState.asset_id),
     )
-    if any(
-        session.scalar(
-            select(column).where(column == asset.id).limit(1)
-        )
+    if any(session.scalar(select(column).where(column == asset.id).limit(1))
         for model, column in references
     ):
-        raise HTTPException(
-            status_code=409,
+        raise HTTPException(status_code=409,
             detail=(
                 "Cannot delete an asset while it has child assets, variables, "
                 "monitoring data, rules, alerts, maintenance records, or history. "
                 "Deactivate it instead."
             ),
         )
-    session.execute(
-        delete(MonitoringEvent).where(MonitoringEvent.asset_id == asset.id)
-    )
+    session.execute(delete(MonitoringEvent).where(MonitoringEvent.asset_id == asset.id))
     session.delete(asset)
     session.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

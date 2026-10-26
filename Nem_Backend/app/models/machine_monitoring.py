@@ -26,23 +26,17 @@ class MachineMonitoringState(Base):
 
 class RuleCounterState(Base):
     __tablename__ = "nem_rule_counter_states"
-    __table_args__ = (
-        UniqueConstraint("rule_id", "asset_id", name="uq_rule_counter_rule_asset"),
-    )
+    __table_args__ = (UniqueConstraint("rule_id", "asset_id", name="uq_rule_counter_rule_asset"),)
     id: Mapped[int] = mapped_column(primary_key=True)
     rule_id: Mapped[int] = mapped_column(
         ForeignKey("nem_monitoring_rules.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    asset_id: Mapped[int] = mapped_column(
-        ForeignKey("assets.id", ondelete="RESTRICT"), nullable=False, index=True
-    )
+    asset_id: Mapped[int] = mapped_column(ForeignKey("assets.id", ondelete="RESTRICT"), nullable=False, index=True)
     cycle_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     cycle_signal: Mapped[bool | None] = mapped_column(Boolean)
-    accumulated_running_seconds: Mapped[Decimal] = mapped_column(
-        Numeric(20, 3), default=0, nullable=False
-    )
+    accumulated_running_seconds: Mapped[Decimal] = mapped_column( Numeric(20, 3), default=0, nullable=False)
     is_running: Mapped[bool | None] = mapped_column(Boolean)
     last_signal_at: Mapped[datetime | None] = mapped_column(UTCDateTime())
     runtime_checkpoint_at: Mapped[datetime | None] = mapped_column(UTCDateTime())

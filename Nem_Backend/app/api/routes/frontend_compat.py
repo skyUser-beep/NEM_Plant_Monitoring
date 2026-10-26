@@ -549,10 +549,7 @@ def _validate_template_collection(
         if excluded_template_id is not None:
             query = query.where(MonitoringRuleTemplate.id != excluded_template_id)
         if (session.scalar(query) or 0) >= 5:
-            raise HTTPException(
-                status_code=422,
-                detail="A rule collection can contain no more than five rules",
-            )
+            raise HTTPException(status_code=422,detail="A rule collection can contain no more than five rules",)
 
 
 #Creating a template not an asset-specific rule - templates are reusable definitions that can be assigned to multiple assets
@@ -569,8 +566,7 @@ def create_rule_template(
 
 
 @router.get("/rule-templates/{template_id}", response_model=RuleTemplateRead)
-def get_rule_template(
-        template_id: int, session: Session = Depends(get_db)
+def get_rule_template(template_id: int, session: Session = Depends(get_db)
 ) -> MonitoringRuleTemplate:
         template = session.get(MonitoringRuleTemplate, template_id)
         if template is None:
@@ -590,9 +586,7 @@ def update_rule_template(
             raise HTTPException(status_code=404, detail="Rule template was not found")
         values = payload.model_dump()
         if values["collection_id"] != template.collection_id:
-            _validate_template_collection(
-                session, values["collection_id"], excluded_template_id=template.id
-            )
+            _validate_template_collection(session, values["collection_id"], excluded_template_id=template.id)
         semantic_fields = (
             "rule_type",
             "required_variable_types",
@@ -644,9 +638,7 @@ def update_rule_template(
 
 #if template has assigned rules,it cannot be deleted 
 @router.delete("/rule-templates/{template_id}", status_code=204)
-def delete_rule_template(
-        template_id: int, session: Session = Depends(get_db)
-) -> None:
+def delete_rule_template(template_id: int, session: Session = Depends(get_db)) -> None:
         template = session.get(MonitoringRuleTemplate, template_id)
         if template is None:
             raise HTTPException(status_code=404, detail="Rule template was not found")
@@ -756,10 +748,7 @@ def frontend_predefined_rules(
         )
         try:
             if not template.is_enabled:
-                raise HTTPException(
-                    status_code=422,
-                    detail=f"Rule template '{template.name}' is disabled",
-                )
+                raise HTTPException(status_code=422,detail=f"Rule template '{template.name}' is disabled",)
             if template.required_variable_types and not candidates:
                 required_role = (
                     "Machine running state"
@@ -776,15 +765,13 @@ def frontend_predefined_rules(
                     else None
                 )
                 if is_mapping_bypass_enabled(request) and required_role:
-                    raise HTTPException(
-                        status_code=422,
+                    raise HTTPException(status_code=422,
                         detail=(
                             f"Set an active Boolean variable's purpose to "
                             f"'{required_role}' in the asset's Variables panel"
                         ),
                     )
-                raise HTTPException(
-                    status_code=422,
+                raise HTTPException(status_code=422,
                     detail=(
                         f"No active compatible variable is available for "
                         f"'{template.name}' on the target asset"
@@ -799,9 +786,7 @@ def frontend_predefined_rules(
                     mapped.id if mapped else None,
                 )
             else:
-                _template_rule_definition(
-                    session, template, asset_id, request, candidates[0].id
-                )
+                _template_rule_definition(session, template, asset_id, request, candidates[0].id)
         except HTTPException as error:
             reason = str(error.detail)
         duplicate = bool(
@@ -845,17 +830,12 @@ def frontend_assign_predefined_rules(
         raise HTTPException(status_code=404, detail=f"Asset {asset_id} was not found")
     templates = session.scalars(
         select(MonitoringRuleTemplate)
-        .where(
-            MonitoringRuleTemplate.id.in_(payload.rule_ids),
-        )
+        .where(MonitoringRuleTemplate.id.in_(payload.rule_ids))
         .order_by(MonitoringRuleTemplate.id)
         .with_for_update()
     ).all()
     if len(templates) != len(payload.rule_ids):
-        raise HTTPException(
-            status_code=404,
-            detail="One or more selected rule templates are unavailable",
-        )
+        raise HTTPException(status_code=404,detail="One or more selected rule templates are unavailable",)
     existing = session.scalars(
         select(MonitoringRule).where(
             MonitoringRule.target_asset_id == asset_id,
@@ -912,10 +892,7 @@ def frontend_copy_asset_rules(
     if payload.source_asset_id == asset_id:
         raise HTTPException(status_code=422, detail="Source and target assets must be different")
     if session.get(Asset, payload.source_asset_id) is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Source asset {payload.source_asset_id} was not found",
-        )
+        raise HTTPException(status_code=404,detail=f"Source asset {payload.source_asset_id} was not found",)
     source_rules = session.scalars(
         select(MonitoringRule)
         .where(
@@ -927,10 +904,7 @@ def frontend_copy_asset_rules(
         .with_for_update()
     ).all()
     if len(source_rules) != len(payload.rule_ids):
-        raise HTTPException(
-            status_code=404,
-            detail="One or more selected source rules are unavailable",
-        )
+        raise HTTPException(status_code=404, detail="One or more selected source rules are unavailable",)
     selected = [
         rule
         for rule in source_rules
@@ -946,10 +920,7 @@ def frontend_copy_asset_rules(
     already_copied = []
     for source in selected:
         if source.rule_type == "generic":
-            raise HTTPException(
-                status_code=422,
-                detail=f"Rule '{source.name}' has no monitoring evaluator and cannot be copied",
-            )
+            raise HTTPException(status_code=422,detail=f"Rule '{source.name}' has no monitoring evaluator and cannot be copied",)
         mapped = _mapped_variable(session, source.variable_id, asset_id)
         definition = _rule_definition(source, asset_id, mapped)
         try:
@@ -1094,8 +1065,7 @@ def frontend_create_time_rule(
 ) -> None:
     if session.get(Asset, asset_id) is None:
         raise HTTPException(status_code=404, detail=f"Asset {asset_id} was not found")
-    raise HTTPException(
-        status_code=410,
+    raise HTTPException(status_code=410,
         detail=(
             "Time-based maintenance is not a monitoring rule. Create a planned "
             "maintenance record through POST /maintenance instead."
@@ -1142,10 +1112,7 @@ def frontend_bulk_rule_state(
         if enabled:
             try:
                 if rule.rule_type == "generic":
-                    raise HTTPException(
-                        status_code=422,
-                        detail="This rule type has no monitoring evaluator",
-                    )
+                    raise HTTPException(status_code=422,detail="This rule type has no monitoring evaluator",)
                 validate_targets(
                     session,
                     rule.target_asset_id,
@@ -1194,10 +1161,7 @@ def _transition_rule_lifecycle(
     elif action in {"resume", "activate"}:
         expected = "suspended" if action == "resume" else "deactivated"
         if current != expected or rule.is_enabled:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Only a {expected} rule can be {action}d.",
-            )
+            raise HTTPException(status_code=409, detail=f"Only a {expected} rule can be {action}d.",)
         if rule.rule_type == "generic":
             raise HTTPException(status_code=422, detail="This rule type has no monitoring evaluator.")
         validate_targets(
@@ -1285,9 +1249,7 @@ def frontend_delete_rule(rule_id: int, session: Session = Depends(get_db)) -> No
     if rule is None or rule.is_archived:
         raise HTTPException(status_code=404, detail=f"Rule {rule_id} was not found")
     if rule.is_enabled:
-        raise HTTPException(
-            status_code=409, detail="Deactivate the rule before archiving it."
-        )
+        raise HTTPException( status_code=409, detail="Deactivate the rule before archiving it.")
     set_rule_enabled_state(session, rule, False)
     resolve_active_rule_alerts(session, rule.id)
     rule.is_archived = True
@@ -1317,10 +1279,7 @@ def frontend_hard_delete_rule(
     if rule is None:
         raise HTTPException(status_code=404, detail=f"Rule {rule_id} was not found")
     if rule.is_enabled:
-        raise HTTPException(
-            status_code=409,
-            detail="Deactivate the rule before permanently deleting it.",
-        )
+        raise HTTPException(status_code=409,detail="Deactivate the rule before permanently deleting it.",)
 
     alert_ids = session.scalars(
         select(Alert.id).where(Alert.rule_id == rule.id)
@@ -1330,9 +1289,7 @@ def frontend_hard_delete_rule(
         .where(MaintenanceRecord.alert_id.in_(alert_ids))
         .limit(1)
     ):
-        raise HTTPException(
-            status_code=409,
-            detail=(
+        raise HTTPException(status_code=409,detail=(
                 "This rule has maintenance records linked to its alerts. "
                 "Remove those links before permanently deleting the rule."
             ),
@@ -1343,15 +1300,11 @@ def frontend_hard_delete_rule(
     event_references = [MonitoringEvent.rule_id == rule.id]
     if alert_ids:
         event_references.append(MonitoringEvent.alert_id.in_(alert_ids))
-    session.execute(
-        delete(MonitoringEvent).where(or_(*event_references))
-    )
+    session.execute(delete(MonitoringEvent).where(or_(*event_references)))
     if alert_ids:
         session.execute(delete(Alert).where(Alert.id.in_(alert_ids)))
     session.execute(delete(RuleState).where(RuleState.rule_id == rule.id))
-    session.execute(
-        delete(RuleCounterState).where(RuleCounterState.rule_id == rule.id)
-    )
+    session.execute(delete(RuleCounterState).where(RuleCounterState.rule_id == rule.id))
     session.delete(rule)
     session.flush()
     emit_event(

@@ -231,10 +231,7 @@ async def read_plc_value(
             },
         )
     except ValidationError as error:
-        raise HTTPException(
-            status_code=422,
-            detail="OPC UA value cannot be represented by the selected variable's supported data type.",
-        ) from error
+        raise HTTPException(status_code=422,detail="OPC UA value cannot be represented by the selected variable's supported data type.",) from error
 
 # Pass the reading to the ingestion service
     reading = ingest_reading(

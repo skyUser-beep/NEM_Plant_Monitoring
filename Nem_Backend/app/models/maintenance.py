@@ -35,7 +35,6 @@ class MaintenanceSchedule(Base):
             "current_due_date",
         ),
     )
-
     id: Mapped[int] = mapped_column(primary_key=True)
     asset_id: Mapped[int] = mapped_column(ForeignKey("assets.id", ondelete="RESTRICT"), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(200), nullable=False)
@@ -43,9 +42,7 @@ class MaintenanceSchedule(Base):
     priority: Mapped[str] = mapped_column(String(20), nullable=False)
     assigned_technician: Mapped[str | None] = mapped_column(String(200))
     description: Mapped[str | None] = mapped_column(Text)
-    instruction_document_ids: Mapped[list[int]] = mapped_column(
-        JSON, nullable=False, default=list, server_default=text("'[]'")
-    )
+    instruction_document_ids: Mapped[list[int]] = mapped_column(JSON, nullable=False, default=list, server_default=text("'[]'"))
     schedule_start_date: Mapped[date] = mapped_column(Date, nullable=False)
     current_period_start_date: Mapped[date] = mapped_column(Date, nullable=False)
     first_due_date: Mapped[date] = mapped_column(Date, nullable=False)
@@ -66,7 +63,6 @@ class MaintenanceSchedule(Base):
         onupdate=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
-
 
 #stores the maintenance work performed on machines 
 class MaintenanceRecord(Base):

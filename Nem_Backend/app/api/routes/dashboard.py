@@ -19,9 +19,7 @@ def dashboard_summary(session: Session = Depends(get_db)) -> DashboardSummary:
     # total assets
     total = session.scalar(select(func.count()).select_from(Asset)) or 0
     #active assest
-    active = session.scalar(
-        select(func.count()).select_from(Asset).where(Asset.is_active.is_(True))
-    ) or 0
+    active = session.scalar(select(func.count()).select_from(Asset).where(Asset.is_active.is_(True))) or 0
     #Counting Monitoring Rules
     rule_total = session.scalar(
         select(func.count())

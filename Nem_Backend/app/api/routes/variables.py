@@ -10,26 +10,16 @@ from app.schemas.variable import VariableCreate, VariableRead, VariableUpdate
 
 router = APIRouter(tags=["variables"])
 
-
 def variable_integrity_conflict(error: IntegrityError) -> HTTPException | None:
     constraint_name = getattr(
         getattr(error.orig, "diag", None),
         "constraint_name",
         None,
     )
-    if constraint_name == "uq_variables_asset_key" or (
-        "variables.asset_id, variables.key" in str(error.orig)
-    ):
-        return HTTPException(
-            status_code=409,
-            detail="Variable key already exists for this asset",
-        )
-    if constraint_name == "uq_variables_opcua_node_id" or (
-        "variables.opcua_node_id" in str(error.orig)
-    ):
-        return HTTPException(
-            status_code=409,
-            detail=(
+    if constraint_name == "uq_variables_asset_key" or ("variables.asset_id, variables.key" in str(error.orig)):
+        return HTTPException(status_code=409,detail="Variable key already exists for this asset",)
+    if constraint_name == "uq_variables_opcua_node_id" or ("variables.opcua_node_id" in str(error.orig)):
+        return HTTPException(status_code=409,detail=(
                 "This OPC UA NodeId is already registered. "
                 "NodeIds can be shared across different assets after the "
                 "database schema has been updated."
@@ -117,10 +107,7 @@ def update_variable(variable_id: int,payload: VariableUpdate,session: Session = 
     resulting_data_type = changes.get("data_type", variable.data_type)
     resulting_signal_role = changes.get("signal_role", variable.signal_role)
     if resulting_data_type != "boolean" and resulting_signal_role is not None:
-        raise HTTPException(
-            status_code=422,
-            detail="A signal purpose can only be set for Boolean variables",
-        )
+        raise HTTPException(status_code=422,detail="A signal purpose can only be set for Boolean variables",)
     if "signal_role" in changes or resulting_data_type != variable.data_type:
         active_signal_rule_types = set(
             session.scalars(
@@ -143,9 +130,7 @@ def update_variable(variable_id: int,payload: VariableUpdate,session: Session = 
             or resulting_signal_role not in required_roles
             or resulting_data_type != "boolean"
         ):
-            raise HTTPException(
-                status_code=409,
-                detail=(
+            raise HTTPException(status_code=409,detail=(
                     "Deactivate or remap the active rules using this variable "
                     "before changing its Boolean purpose."
                 ),
@@ -166,7 +151,6 @@ def update_variable(variable_id: int,payload: VariableUpdate,session: Session = 
     session.refresh(variable)
     return variable
 
-
 @router.delete("/variables/{variable_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_variable(
     variable_id: int,
@@ -186,8 +170,7 @@ def delete_variable(
         )
         for model, column in references
     ):
-        raise HTTPException(
-            status_code=409,
+        raise HTTPException( status_code=409,
             detail=(
                 "Cannot delete a variable referenced by readings, monitoring "
                 "rules, rule states, or alerts. Deactivate it instead."
@@ -205,8 +188,7 @@ def delete_variable(
         )
         if signal is not None
     ):
-        raise HTTPException(
-            status_code=409,
+        raise HTTPException(status_code=409,
             detail=(
                 "Cannot delete a variable used by OPC UA_MACHINE_MAPPINGS. "
                 "Remove its mapping and restart the backend first."

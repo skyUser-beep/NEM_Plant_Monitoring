@@ -81,6 +81,10 @@ export default function App() {
           element={<CreateInstructionPage />}
         />
         <Route
+          path="/configuration/instructions"
+          element={<Navigate to="/configuration/documents" replace />}
+        />
+        <Route
           path="/configuration/documents/:documentId/files/:fileId/view"
           element={<DocumentViewerPage />}
         />

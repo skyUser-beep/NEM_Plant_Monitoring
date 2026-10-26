@@ -1,4 +1,4 @@
-"""Local login, session management, and administrator account controls."""
+# Local login, session management, and administrator account controls.
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Literal
 
@@ -170,9 +170,7 @@ def update_user(user_id: int, payload: UserUpdate, db: Db) -> dict:
     )
     if removing_admin:
         active_admin_count = db.scalar(
-            select(User.id).where(
-                User.role == "Administrator", User.is_active.is_(True), User.id != user.id
-            ).limit(1)
+            select(User.id).where(User.role == "Administrator", User.is_active.is_(True), User.id != user.id).limit(1)
         )
         if active_admin_count is None:
             raise HTTPException(status_code=409, detail="The last active administrator cannot be removed")

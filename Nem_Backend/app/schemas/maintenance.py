@@ -176,23 +176,14 @@ class MaintenanceScheduleCreate(ORMModel):
         if not cleaned:
             raise ValueError("Text fields cannot be empty")
         return cleaned
-
     @model_validator(mode="after")
     def validate_schedule(self):
         if self.first_due_date < self.schedule_start_date:
             raise ValueError("first_due_date must not precede schedule_start_date")
-        if self.recurrence_enabled and (
-            self.recurrence_interval is None or self.recurrence_unit is None
-        ):
-            raise ValueError(
-                "recurrence_interval and recurrence_unit are required for recurring schedules"
-            )
-        if not self.recurrence_enabled and (
-            self.recurrence_interval is not None or self.recurrence_unit is not None
-        ):
-            raise ValueError(
-                "recurrence settings require recurrence_enabled=true"
-            )
+        if self.recurrence_enabled and (self.recurrence_interval is None or self.recurrence_unit is None):
+            raise ValueError("recurrence_interval and recurrence_unit are required for recurring schedules")
+        if not self.recurrence_enabled and (self.recurrence_interval is not None or self.recurrence_unit is not None):
+            raise ValueError("recurrence settings require recurrence_enabled=true")
         return self
 
 #Updates an existing schedule, modifying an existing schedule.

@@ -11,7 +11,7 @@ from app.core.config import get_settings, validate_postgresql_database_url
 
 #this class customizes how SQLAlchemy converts timestamps between Python and the database.
 class UTCDateTime(TypeDecorator[datetime]):
-    """Expose aware UTC datetimes while storing UTC-naive timestamps."""
+    #Expose aware UTC datetimes while storing UTC-naive timestamps
 
     impl = DateTime
     cache_ok = True

@@ -183,9 +183,7 @@ def alert_query(
         filters.append(Alert.status == lifecycle_status)
         if lifecycle_status == "active":
             query = query.outerjoin(MonitoringRule, MonitoringRule.id == Alert.rule_id)
-            count_query = count_query.outerjoin(
-                MonitoringRule, MonitoringRule.id == Alert.rule_id
-            )
+            count_query = count_query.outerjoin( MonitoringRule, MonitoringRule.id == Alert.rule_id)
             filters.extend(
                 [
                     or_(
@@ -283,9 +281,7 @@ def acknowledge_alert(
     session: Session = Depends(get_db),
 ) -> Alert:
     # find the alert
-    alert = session.scalar(
-        select(Alert).where(Alert.id == alert_id).with_for_update()
-    )
+    alert = session.scalar(select(Alert).where(Alert.id == alert_id).with_for_update())
     if alert is None:
         raise HTTPException(status_code=404, detail=f"Alert {alert_id} was not found")
     user_id = getattr(request.state, "auth_user_id", None)
@@ -405,7 +401,6 @@ def complete_rule_from_alert(
     session.refresh(alert)
     return alert
 
-
 #Listing monitoring events
 @router.get("/events")
 def list_events(
@@ -439,13 +434,9 @@ def list_events(
         if value is not None:
             query, count_query = query.where(column == value), count_query.where(column == value)
     if start is not None:
-        query, count_query = query.where(MonitoringEvent.occurred_at >= start), count_query.where(
-            MonitoringEvent.occurred_at >= start
-        )
+        query, count_query = query.where(MonitoringEvent.occurred_at >= start), count_query.where(MonitoringEvent.occurred_at >= start)
     if end is not None:
-        query, count_query = query.where(MonitoringEvent.occurred_at <= end), count_query.where(
-            MonitoringEvent.occurred_at <= end
-        )
+        query, count_query = query.where(MonitoringEvent.occurred_at <= end), count_query.where(MonitoringEvent.occurred_at <= end)
     rows = session.execute(
         query.order_by(MonitoringEvent.occurred_at.desc(), MonitoringEvent.id.desc())
         .offset(offset)
@@ -472,7 +463,6 @@ def get_event(event_id: int, session: Session = Depends(get_db)) -> MonitoringEv
     if event is None:
         raise HTTPException(status_code=404, detail=f"Event {event_id} was not found")
     return event
-
 
 @router.delete("/events/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_event(event_id: int, session: Session = Depends(get_db)) -> Response:

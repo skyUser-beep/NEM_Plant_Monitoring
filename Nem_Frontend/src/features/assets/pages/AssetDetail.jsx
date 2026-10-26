@@ -1672,7 +1672,7 @@ const filteredEvents = [...events]
 
       {tab === "status" && (
         <>
-          <div className="toolbar rule-toolbar">
+          <div className={`toolbar rule-toolbar${showFilter ? " filter-open" : ""}`}>
             <button
               className={
                 "icon-outline sm" +

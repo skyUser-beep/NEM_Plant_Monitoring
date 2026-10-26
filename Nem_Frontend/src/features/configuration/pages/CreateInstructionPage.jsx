@@ -97,7 +97,9 @@ export default function CreateInstructionPage() {
       files.forEach((file) => form.append("files", file));
       await api.postForm("/documents/with-files", form);
 
-      nav("/configuration/instructions");
+      nav("/configuration/documents", {
+        state: { documentCreated: true },
+      });
     } catch (err) {
       setError(
         err.message || "Unable to create instruction."

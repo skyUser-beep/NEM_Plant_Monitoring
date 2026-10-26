@@ -149,8 +149,7 @@ def validate_targets(
                 try:
                     ua.NodeId.from_string(variable.opcua_node_id)
                 except (TypeError, ValueError, UaStringParsingError) as error:
-                    raise HTTPException(status_code=422,detail="Running-time rules require a valid OPC UA NodeId",
-                    ) from error
+                    raise HTTPException(status_code=422,detail="Running-time rules require a valid OPC UA NodeId",) from error
             if (
                 runtime_signal_mapping != (target_asset_id, variable_id)
                 and not bypass_signal_is_valid
@@ -174,10 +173,7 @@ def validate_targets(
                 expected = (parameters or {}).get("expected_value")
                 if condition == "threshold":
                     if variable is None or variable.data_type not in {"number", "integer"}:
-                        raise HTTPException(
-                            status_code=422,
-                            detail="Threshold duration rules require a numeric variable.",
-                        )
+                        raise HTTPException(status_code=422, detail="Threshold duration rules require a numeric variable.",)
                 elif isinstance(expected, bool):
                     if (
                         asset is None
@@ -186,10 +182,7 @@ def validate_targets(
                         or not variable.is_active
                         or variable.data_type != "boolean"
                     ):
-                        raise HTTPException(
-                            status_code=422,
-                            detail="Boolean duration rules require an active Boolean variable on an active asset.",
-                        )
+                        raise HTTPException( status_code=422, detail="Boolean duration rules require an active Boolean variable on an active asset.",)
                     bypass_signal_is_valid = (
                         mapping_bypass_enabled
                         and variable.opcua_node_id is not None
@@ -199,16 +192,12 @@ def validate_targets(
                         try:
                             ua.NodeId.from_string(variable.opcua_node_id)
                         except (TypeError, ValueError, UaStringParsingError) as error:
-                            raise HTTPException(
-                                status_code=422,
-                                detail="Boolean duration rules require a valid OPC UA NodeId.",
-                            ) from error
+                            raise HTTPException(status_code=422,detail="Boolean duration rules require a valid OPC UA NodeId.",) from error
                     if (
                         runtime_signal_mapping != (target_asset_id, variable_id)
                         and not bypass_signal_is_valid
                     ):
-                        raise HTTPException(
-                            status_code=422,
+                        raise HTTPException(status_code=422,
                             detail=(
                                 "Boolean duration rules must target this asset's "
                                 "configured running signal or a declared variable "
@@ -223,8 +212,7 @@ def validate_targets(
             or not variable.is_active
             or variable.data_type != "boolean"
         ):
-            raise HTTPException(status_code=422,detail=("Boolean count threshold rules require an active Boolean variable"),
-            )
+            raise HTTPException(status_code=422,detail=("Boolean count threshold rules require an active Boolean variable"),)
         bypass_signal_is_valid = (
             mapping_bypass_enabled
             and variable is not None
@@ -235,10 +223,7 @@ def validate_targets(
             try:
                 ua.NodeId.from_string(variable.opcua_node_id)
             except (TypeError, ValueError, UaStringParsingError) as error:
-                raise HTTPException(
-                    status_code=422,
-                    detail="Boolean count threshold rules require a valid OPC UA NodeId",
-                ) from error
+                raise HTTPException(status_code=422,detail="Boolean count threshold rules require a valid OPC UA NodeId",) from error
         if (
             cycle_signal_mapping != (target_asset_id, variable_id)
             and not bypass_signal_is_valid
@@ -266,10 +251,7 @@ def validate_targets(
             or isinstance(alert_threshold, bool)
             or alert_threshold <= warning_thresholds[1]
         ):
-            raise HTTPException(status_code=422,detail=("Configure two increasing positive warning thresholds "
-                    "and a larger positive alert threshold"
-                ),
-            )
+            raise HTTPException(status_code=422,detail=("Configure two increasing positive warning thresholds and a larger positive alert threshold"),)
 
 # Create a new rule
 @router.post("", response_model=RuleRead, status_code=status.HTTP_201_CREATED)

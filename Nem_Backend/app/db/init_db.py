@@ -49,10 +49,7 @@ def _migrate_auth_roles(engine: Engine) -> None:
 
         if engine.dialect.name == "postgresql":
             check_constraints = inspect(connection).get_check_constraints("auth_users")
-            if not any(
-                constraint["name"] == "ck_auth_users_role"
-                for constraint in check_constraints
-            ):
+            if not any(constraint["name"] == "ck_auth_users_role" for constraint in check_constraints):
                 connection.execute(
                     text(
                         "ALTER TABLE auth_users "
@@ -90,7 +87,6 @@ def _migrate_auth_roles(engine: Engine) -> None:
             )
         else:
             raise RuntimeError("User role migration is not implemented for "f"{engine.dialect.name}")
-
 
 def initialize_database(engine: Engine) -> None:
     Base.metadata.create_all(bind=engine)

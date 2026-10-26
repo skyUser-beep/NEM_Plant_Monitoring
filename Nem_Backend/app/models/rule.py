@@ -37,20 +37,15 @@ class MonitoringRuleTemplate(Base):
     is_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     evaluation_interval_seconds: Mapped[int | None] = mapped_column()
     stale_after_seconds: Mapped[int | None] = mapped_column()
-    collection_id: Mapped[int | None] = mapped_column(
-        ForeignKey("rule_collections.id", ondelete="SET NULL"), index=True
-    )
+    collection_id: Mapped[int | None] = mapped_column(ForeignKey("rule_collections.id", ondelete="SET NULL"), index=True)
     legacy_rule_id: Mapped[int | None] = mapped_column(unique=True)
-    created_at: Mapped[datetime] = mapped_column(
-        UTCDateTime(), default=lambda: datetime.now(timezone.utc), nullable=False
-    )
+    created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=lambda: datetime.now(timezone.utc), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         UTCDateTime(),
         default=lambda: datetime.now(timezone.utc),
         onupdate=lambda: datetime.now(timezone.utc),
         nullable=False,
     )
-
 
 class MonitoringRule(Base):
     __tablename__ = "nem_monitoring_rules"
@@ -73,8 +68,7 @@ class MonitoringRule(Base):
     description: Mapped[str | None] = mapped_column(Text)
     rule_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
     target_asset_id: Mapped[int | None] = mapped_column(ForeignKey("assets.id", ondelete="RESTRICT"), index=True)
-    source_template_id: Mapped[int | None] = mapped_column(
-        ForeignKey("nem_monitoring_rule_templates.id", ondelete="RESTRICT"),
+    source_template_id: Mapped[int | None] = mapped_column(ForeignKey("nem_monitoring_rule_templates.id", ondelete="RESTRICT"),
         index=True,
     )
     variable_id: Mapped[int | None] = mapped_column(ForeignKey("variables.id", ondelete="RESTRICT"), index=True)
@@ -149,19 +143,11 @@ class Alert(Base):
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    rule_id: Mapped[int | None] = mapped_column(
-        ForeignKey("nem_monitoring_rules.id", ondelete="RESTRICT"), nullable=True, index=True
-    )
-    maintenance_schedule_id: Mapped[int | None] = mapped_column(
-        ForeignKey("nem_maintenance_schedules.id", ondelete="RESTRICT"), index=True
-    )
+    rule_id: Mapped[int | None] = mapped_column(ForeignKey("nem_monitoring_rules.id", ondelete="RESTRICT"), nullable=True, index=True)
+    maintenance_schedule_id: Mapped[int | None] = mapped_column(ForeignKey("nem_maintenance_schedules.id", ondelete="RESTRICT"), index=True)
     maintenance_due_date: Mapped[date | None] = mapped_column(Date)
-    target_asset_id: Mapped[int] = mapped_column(
-        ForeignKey("assets.id", ondelete="RESTRICT"), nullable=False, index=True
-    )
-    target_variable_id: Mapped[int | None] = mapped_column(
-        ForeignKey("variables.id", ondelete="RESTRICT"), index=True
-    )
+    target_asset_id: Mapped[int] = mapped_column(ForeignKey("assets.id", ondelete="RESTRICT"), nullable=False, index=True)
+    target_variable_id: Mapped[int | None] = mapped_column(ForeignKey("variables.id", ondelete="RESTRICT"), index=True)
     severity: Mapped[str] = mapped_column(String(20), nullable=False)
     title: Mapped[str] = mapped_column(String(250), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)

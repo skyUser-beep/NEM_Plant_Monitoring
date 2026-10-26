@@ -19,7 +19,6 @@ class Reading(Base):
     recorded_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=lambda: datetime.now(timezone.utc), nullable=False, index=True)
     source_id: Mapped[str | None] = mapped_column(String(200))
     metadata_json: Mapped[dict[str, Any] | None] = mapped_column("metadata", JSON)
-
     variable: Mapped["Variable"] = relationship() # type: ignore
 
 '''
