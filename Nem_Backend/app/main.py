@@ -118,18 +118,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     selected_settings = settings or get_settings()
     engine = create_database_engine(selected_settings.database_url)
     live_updates = LiveUpdateHub()
-    session_factory: sessionmaker = create_session_factory(
-        engine,
-        info={"live_update_hub": live_updates},
-    )
+    session_factory: sessionmaker = create_session_factory(engine,info={"live_update_hub": live_updates},)
     opcua_collector = OpcUaCollector(
         selected_settings,
         session_factory,
         status_changed=live_updates.publish_status,
     )
-    live_updates.add_database_change_listener(
-        opcua_collector.request_configuration_refresh
-    )
+    live_updates.add_database_change_listener(opcua_collector.request_configuration_refresh)
 
 #Application startup and shutdown
     @asynccontextmanager
@@ -201,17 +196,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         authorization = request.headers.get("authorization", "")
         scheme, _, token = authorization.partition(" ")
         if scheme.casefold() != "bearer" or not token.strip():
-            return JSONResponse(
-                status_code=401,
-                content={"detail": "Authentication required"},
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+            return JSONResponse(status_code=401,content={"detail": "Authentication required"},headers={"WWW-Authenticate": "Bearer"},)
 
         token_hash = hash_session_token(token.strip())
         with session_factory() as db:
-            auth_session = db.scalar(
-                select(AuthSession).where(AuthSession.token_hash == token_hash)
-            )
+            auth_session = db.scalar(select(AuthSession).where(AuthSession.token_hash == token_hash))
             now = utc_now()
             user = auth_session.user if auth_session is not None else None
             if (
@@ -223,11 +212,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 if auth_session is not None and auth_session.expires_at <= now:
                     db.delete(auth_session)
                     db.commit()
-                return JSONResponse(
-                    status_code=401,
-                    content={"detail": "Session is invalid or expired"},
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
+                return JSONResponse(status_code=401,content={"detail": "Session is invalid or expired"},headers={"WWW-Authenticate": "Bearer"},)
 
             role = user.role
             request.state.auth_user_id = user.id
@@ -345,12 +330,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 and policy_segments[4].isdecimal()
                 and policy_segments[5] in {"start", "complete"}
             )
-            if admin_only_write or not (
-                operator_acknowledge or operator_maintenance_action
-            ):
-                return JSONResponse(
-                    status_code=403,
-                    content={
+            if admin_only_write or not (operator_acknowledge or operator_maintenance_action):
+                return JSONResponse(status_code=403,content={
                         "detail": (
                             "Operators may acknowledge or complete resolved alerts, "
                             "or start and complete scheduled maintenance due today or overdue."
@@ -404,9 +385,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         async def reauthorize_socket() -> tuple[bool, set[int] | None]:
             def read_current_access() -> tuple[bool, set[int] | None]:
                 with session_factory() as db:
-                    current_session = db.scalar(
-                        select(AuthSession).where(AuthSession.token_hash == hash_session_token(token))
-                    )
+                    current_session = db.scalar(select(AuthSession).where(AuthSession.token_hash == hash_session_token(token)))
                     current_user = (current_session.user if current_session is not None else None)
                     if (
                         current_session is None
