@@ -981,7 +981,7 @@ export default function ConfigSub() {
           {sub === "documents" && (
             <button
               type="button"
-              className="btn-secondary"
+              className="btn-primary"
               disabled={!canCreateRulesAndDocuments}
               title={!canCreateRulesAndDocuments ? "Only Administrators and Supervisors can create instructions." : undefined}
               onClick={() =>

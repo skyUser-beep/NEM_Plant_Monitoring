@@ -12,10 +12,11 @@
   },
   "dependencies": {
     "@e965/xlsx": "^0.20.3",
-    "lucide-react": "^1.59.0",
+    "lucide-react": "^1.61.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-router-dom": "^6.26.0"
+    "react-router-dom": "^6.26.0",
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",

@@ -926,22 +926,150 @@ const openEdit = (record) => {
 
       {dialog?.kind === "details" && (
         <Modal title="Maintenance details" onClose={() => setDialog(null)} wide>
-          {error && <p className="notice error" role="alert">{error}</p>}
-          <dl className="maintenance-details">
-            <dt>Title</dt><dd>{dialog.record.title}</dd>
-            <dt>Type / status / priority</dt><dd>{dialog.record.maintenance_type} / {dialog.record.status.replace("_", " ")} / {dialog.record.priority}</dd>
-            <dt>Planned start / end</dt><dd>{formatTime(dialog.record.planned_start_at)} – {formatTime(dialog.record.planned_end_at)}</dd>
-            <dt>Actual start / completion</dt><dd>{formatTime(dialog.record.actual_started_at)} – {formatTime(dialog.record.actual_completed_at)}</dd>
-            <dt>Actual duration</dt><dd>{actualDuration(dialog.record, clockNow)}</dd>
-            <dt>Assigned technician</dt><dd>{dialog.record.assigned_technician || "—"}</dd>
-            <dt>Description / work details</dt><dd>{dialog.record.notes || "—"}</dd>
-            <dt>Completion notes</dt><dd>{dialog.record.completion_notes || "—"}</dd>
-            <dt>Parts used</dt><dd>{dialog.record.parts_used || "—"}</dd>
-            <dt>Next maintenance</dt><dd>{formatTime(dialog.record.next_due_at)}</dd>
-            <dt>Related alert</dt><dd>{dialog.record.alert_id || "—"}</dd>
-            <dt>Checklist</dt>
-            <dd>{dialog.record.checklist?.length ? dialog.record.checklist.map((item) => `${item.completed ? "✓" : "○"} ${item.item}`).join(", ") : "—"}</dd>
-          </dl>
+          {error && <p className="notice error" role="alert">{error}</p>}         
+<div className="maintenance-detail-view">
+  <div className="maintenance-detail-hero">
+    <div className="maintenance-detail-symbol" aria-hidden="true">
+      <span>⚙</span>
+    </div>
+    <div className="maintenance-detail-hero-copy">
+      <span className="maintenance-detail-eyebrow">
+        MAINTENANCE RECORD
+      </span>
+      <h3>{dialog.record.title || "Untitled maintenance"}</h3>
+      <p>
+        {String(dialog.record.maintenance_type || "maintenance")
+          .replaceAll("_", " ")}
+        {" · "}
+        {dialog.record.priority || "medium"} priority
+      </p>
+    </div>
+    <span
+      className={`maintenance-detail-status maintenance-detail-status--${String(
+        dialog.record.status || "planned"
+      ).replaceAll("_", "-")}`}
+    >
+      {String(dialog.record.status || "planned").replaceAll("_", " ")}
+    </span>
+  </div>
+
+  <div className="maintenance-detail-content">
+    <section className="maintenance-detail-section">
+      <h4>GENERAL INFORMATION</h4>
+      <div className="maintenance-detail-grid">
+        <div className="maintenance-detail-field">
+          <span>Maintenance type</span>
+          <strong>{dialog.record.maintenance_type || "—"}</strong>
+        </div>
+        <div className="maintenance-detail-field">
+          <span>Priority</span>
+          <strong>{dialog.record.priority || "—"}</strong>
+        </div>
+        <div className="maintenance-detail-field">
+          <span>Assigned technician</span>
+          <strong>
+            {dialog.record.assigned_technician ||
+              dialog.record.performed_by ||
+              "—"}
+          </strong>
+        </div>
+        <div className="maintenance-detail-field">
+          <span>Actual duration</span>
+          <strong>{actualDuration(dialog.record, clockNow)}</strong>
+        </div>
+      </div>
+    </section>
+
+    <section className="maintenance-detail-section">
+      <h4>SCHEDULE & EXECUTION</h4>
+      <div className="maintenance-detail-timeline">
+        <div className="maintenance-detail-time">
+          <span className="maintenance-detail-time-dot planned" />
+          <div>
+            <span>Planned start</span>
+            <strong>{formatTime(dialog.record.planned_start_at)}</strong>
+          </div>
+        </div>
+        <div className="maintenance-detail-time">
+          <span className="maintenance-detail-time-dot planned" />
+          <div>
+            <span>Planned end</span>
+            <strong>{formatTime(dialog.record.planned_end_at)}</strong>
+          </div>
+        </div>
+        <div className="maintenance-detail-time">
+          <span className="maintenance-detail-time-dot actual" />
+          <div>
+            <span>Actual start</span>
+            <strong>{formatTime(dialog.record.actual_started_at)}</strong>
+          </div>
+        </div>
+        <div className="maintenance-detail-time">
+          <span className="maintenance-detail-time-dot actual" />
+          <div>
+            <span>Actual completion</span>
+            <strong>{formatTime(dialog.record.actual_completed_at)}</strong>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section className="maintenance-detail-section">
+      <h4>WORK DETAILS</h4>
+      <div className="maintenance-detail-notes">
+        {dialog.record.notes || "No work details provided."}
+      </div>
+    </section>
+
+    <section className="maintenance-detail-section">
+      <h4>COMPLETION SUMMARY</h4>
+      <div className="maintenance-detail-grid">
+        <div className="maintenance-detail-field">
+          <span>Completion notes</span>
+          <strong>
+            {dialog.record.completion_notes || "—"}
+          </strong>
+        </div>
+        <div className="maintenance-detail-field">
+          <span>Parts used</span>
+          <strong>{dialog.record.parts_used || "—"}</strong>
+        </div>
+        <div className="maintenance-detail-field">
+          <span>Next maintenance</span>
+          <strong>{formatTime(dialog.record.next_due_at)}</strong>
+        </div>
+        <div className="maintenance-detail-field">
+          <span>Related alert</span>
+          <strong>{dialog.record.alert_id || "—"}</strong>
+        </div>
+      </div>
+
+      <div className="maintenance-detail-checklist">
+        <span>Checklist</span>
+        {dialog.record.checklist?.length ? (
+          <ul>
+            {dialog.record.checklist.map((item, index) => (
+              <li key={`${item.item}-${index}`}>
+                <span
+                  className={
+                    item.completed
+                      ? "maintenance-check-done"
+                      : "maintenance-check-pending"
+                  }
+                >
+                  {item.completed ? "✓" : "○"}
+                </span>
+                {item.item}
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p>No checklist items available.</p>
+        )}
+      </div>
+    </section>
+  </div>
+</div>
           <div className="modal-actions">
             {dialog.record.status === "planned" && (
               <button

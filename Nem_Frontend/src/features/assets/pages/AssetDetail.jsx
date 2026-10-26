@@ -1,5 +1,5 @@
 ﻿
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import { Download, Trash2 } from "lucide-react";
 import CopyRulesModal from "../components/CopyRulesModal.jsx";
@@ -543,10 +543,6 @@ export default function AssetDetail() {
   const ruleListSeq = useRef(0);
   const ruleStatusSeq = useRef(0);
   const plcStatusSeq = useRef(0);
-  const toolbarActionsButtonRef = useRef(null);
-  const toolbarActionsMenuRef = useRef(null);
-  const [toolbarActionsMenuPosition, setToolbarActionsMenuPosition] =
-    useState(null);
   const bulkRequest = useRef(false);
   const permanentDeleteRequest = useRef(false);
 
@@ -578,59 +574,6 @@ export default function AssetDetail() {
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [menu, ruleActionMenuId, sortMenu]);
-
-  useLayoutEffect(() => {
-    if (!menu) {
-      setToolbarActionsMenuPosition(null);
-      return undefined;
-    }
-
-    const positionMenu = () => {
-      const button = toolbarActionsButtonRef.current;
-      const dropdown = toolbarActionsMenuRef.current;
-      if (!button || !dropdown) return;
-
-      const buttonRect = button.getBoundingClientRect();
-      const menuRect = dropdown.getBoundingClientRect();
-      const edgePadding = 8;
-      const left = Math.max(
-        edgePadding,
-        Math.min(
-          buttonRect.left,
-          window.innerWidth - menuRect.width - edgePadding
-        )
-      );
-      const below = buttonRect.bottom + 4;
-      const top =
-        below + menuRect.height <= window.innerHeight - edgePadding
-          ? below
-          : Math.max(
-              edgePadding,
-              Math.min(
-                buttonRect.top - menuRect.height - 4,
-                window.innerHeight - menuRect.height - edgePadding
-              )
-            );
-
-      setToolbarActionsMenuPosition((current) =>
-        current?.left === left && current?.top === top
-          ? current
-          : { left, top }
-      );
-    };
-
-    positionMenu();
-    window.addEventListener("resize", positionMenu);
-    window.addEventListener("scroll", positionMenu, true);
-    window.visualViewport?.addEventListener("resize", positionMenu);
-    window.visualViewport?.addEventListener("scroll", positionMenu);
-    return () => {
-      window.removeEventListener("resize", positionMenu);
-      window.removeEventListener("scroll", positionMenu, true);
-      window.visualViewport?.removeEventListener("resize", positionMenu);
-      window.visualViewport?.removeEventListener("scroll", positionMenu);
-    };
-  }, [menu]);
 
   
   const loadLive = useCallback(async ({
@@ -1672,7 +1615,7 @@ const filteredEvents = [...events]
 
       {tab === "status" && (
         <>
-          <div className={`toolbar rule-toolbar${showFilter ? " filter-open" : ""}`}>
+          <div className="toolbar rule-toolbar">
             <button
               className={
                 "icon-outline sm" +
@@ -1745,76 +1688,64 @@ const filteredEvents = [...events]
             </label>
 
             <div className="spacer" />
+
             <div className="dropdown" data-menu-open={sortMenu}>
-                <button
-                  className="link-btn"
-                  onClick={() => setSortMenu(!sortMenu)}
-                  aria-haspopup="menu"
-                  aria-expanded={sortMenu}
-                >
-                  Sort by {sort === "name" ? "name" : "severity"}{" "}
-                  <ChevronDown size={14} />
-                </button>
-
-                {sortMenu && (
-                  <div className="menu" role="menu">
-                    <div
-                      role="menuitem"
-                      onClick={() => {
-                        setSort("severity");
-                        setSortMenu(false);
-                      }}
-                    >
-                      Severity
-                    </div>
-
-                    <div
-                      role="menuitem"
-                      onClick={() => {
-                        setSort("name");
-                        setSortMenu(false);
-                      }}
-                    >
-                      Name
-                    </div>
-                  </div>
-                )}
-              </div>
               <button
-                className="btn-primary"
-                onClick={() => setModal("addRuleOptions")}
-                disabled={!canManageRules}
-                title={!canManageRules ? "You do not have permission to manage monitoring rules." : undefined}
+                className="link-btn"
+                onClick={() => setSortMenu(!sortMenu)}
+                aria-haspopup="menu"
+                aria-expanded={sortMenu}
               >
-                <PlusCircle size={17} /> Add Rule
+                Sort by {sort === "name" ? "name" : "severity"}{" "}
+                <ChevronDown size={14} />
               </button>
 
-              <div className="dropdown" data-menu-open={menu}>
-                <button
-                  ref={toolbarActionsButtonRef}
-                  className="icon-outline sm"
-                  onClick={() => setMenu(!menu)}
-                  title="Rule actions"
-                  aria-label="Rule actions"
-                  aria-haspopup="menu"
-                  aria-expanded={menu}
-                >
-                  <DotsIcon size={17} />
-                </button>
-                {menu && (
+              {sortMenu && (
+                <div className="menu" role="menu">
                   <div
-                    ref={toolbarActionsMenuRef}
-                    className="menu toolbar-actions-dropdown-menu"
-                    role="menu"
-                    style={
-                      toolbarActionsMenuPosition
-                        ? {
-                            left: `${toolbarActionsMenuPosition.left}px`,
-                            top: `${toolbarActionsMenuPosition.top}px`,
-                          }
-                        : undefined
-                    }
+                    role="menuitem"
+                    onClick={() => {
+                      setSort("severity");
+                      setSortMenu(false);
+                    }}
                   >
+                    Severity
+                  </div>
+
+                  <div
+                    role="menuitem"
+                    onClick={() => {
+                      setSort("name");
+                      setSortMenu(false);
+                    }}
+                  >
+                    Name
+                  </div>
+                </div>
+              )}
+            </div>
+            <button
+            className="btn-primary"
+            onClick={() => setModal("addRuleOptions")}
+            disabled={!canManageRules}
+            title={!canManageRules ? "You do not have permission to manage monitoring rules." : undefined}
+            >
+              <PlusCircle size={17} /> Add Rule
+              </button>
+
+            <div className="dropdown" data-menu-open={menu}>
+              <button
+                className="icon-outline sm"
+                onClick={() => setMenu(!menu)}
+                title="Rule actions"
+                aria-label="Rule actions"
+                aria-haspopup="menu"
+                aria-expanded={menu}
+              >
+                <DotsIcon size={17} />
+              </button>
+                {menu && (
+                  <div className="menu right" role="menu">
                       <button
                       type="button"
                       disabled={bulkSaving || !canManageRules}
@@ -1831,10 +1762,10 @@ const filteredEvents = [...events]
                       role="menuitem"
                         onClick={() => bulk("not_activated")}
                         >Deactivate all rules</button>
-                  </div>
-                )}
-              </div>
-          </div>
+                        </div>
+                      )}
+                    </div>
+                    </div>
 
           {shown.length === 0 && list === "activated" ? (
             <div className="panel">

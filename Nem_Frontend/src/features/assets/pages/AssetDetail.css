@@ -702,7 +702,7 @@
   }
 }
 
-/* Maintenance log notes */
+
 .maintenance-log-notes {
   margin-top: 20px;
   min-width: 0;
@@ -802,7 +802,7 @@
   }
 }
 
-/* Maintenance log notes */
+
 .maintenance-log-notes {
   margin-top: 20px;
   min-width: 0;
@@ -902,7 +902,7 @@
   }
 }
 
-/* Variable source and connector controls */
+
 .variable-source-section {
   display: grid;
   gap: 14px;
@@ -947,7 +947,7 @@
 
 
 
-/* ===== Event Log: Existing dashboard theme ===== */
+
 
 .event-log-section {
   color: var(--ink, #1f2937);
@@ -1119,7 +1119,7 @@
   white-space: nowrap;
 }
 
-/* Empty state */
+
 .event-log-section .event-log-table .empty-state {
   padding: 32px 16px;
   text-align: center;
@@ -1127,7 +1127,7 @@
   font-size: 14px;
 }
 
-/* View button */
+
 .event-log-section .event-log-table .btn-secondary {
   padding: 7px 15px;
   color: var(--ink, #1f2937);
@@ -1190,7 +1190,7 @@
   }
 }
 
-/* Actual application dark-theme selector */
+
 html[data-theme="dark"] .event-log-section {
   color: var(--ink, #e5e7eb);
   background: var(--surface, #151b23);
