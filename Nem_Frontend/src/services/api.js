@@ -1,5 +1,5 @@
 const BASE = (import.meta.env.VITE_API_URL || "/api/v1").replace(/\/+$/, "");
-export const AUTH_TOKEN_KEY = "nem-access-token";
+export const AUTH_TOKEN_KEY = "access_token";
 
 export function getAuthToken() {
   try {
@@ -8,6 +8,7 @@ export function getAuthToken() {
     return null;
   }
 }
+
 
 function describeError(body, fallback) {
   if (body && typeof body === "object") {
@@ -39,18 +40,20 @@ export class ApiError extends Error {
 async function req(path, opts = {}) {
   let res;
   try {
-    res = await fetch(`${BASE}${path}`, {
-      ...opts,
-      headers: {
-        ...(getAuthToken()
-          ? { Authorization: `Bearer ${getAuthToken()}` }
-          : {}),
-        ...(opts.body && !(opts.body instanceof FormData)
-          ? { "Content-Type": "application/json" }
-          : {}),
-        ...opts.headers,
-      },
-    });
+
+const token = getAuthToken();
+
+res = await fetch(`${BASE}${path}`, {
+  ...opts,
+  headers: {
+    ...(opts.body && !(opts.body instanceof FormData)
+      ? { "Content-Type": "application/json" }
+      : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...opts.headers,
+  },
+});
+
   } catch {
     throw new ApiError(
       "Cannot reach the backend. Check that the API server is running on port 8000.",

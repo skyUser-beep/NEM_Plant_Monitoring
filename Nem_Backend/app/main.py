@@ -233,11 +233,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             role == "Supervisor"
             and method == "POST"
             and policy_path in {
-                "/api/v1/rule-templates",
+                "/api/v1/rule-template-requests",
                 "/api/v1/documents",
                 "/api/v1/documents/with-files",
-            }
-        )
+                }
+                )
+                
         supervisor_rule_template_update = (
             role == "Supervisor"
             and method == "PUT"

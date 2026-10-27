@@ -15,6 +15,7 @@ from app.models.rule import (
     MonitoringEvent,
     MonitoringRule,
     MonitoringRuleTemplate,
+    MonitoringRuleTemplateRequest,
     RuleState,
     SchedulerLease,
 )

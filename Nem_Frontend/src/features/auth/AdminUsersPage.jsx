@@ -267,16 +267,18 @@ export default function AdminUsersPage() {
                         </>
                       )}
                       {/* Create account button */}
-                      <button
-                      type="submit"
-                      className="btn-primary"
-                      disabled={busy || !canManageUsers}
-                      title={!canManageUsers ? "Administrator access required" : undefined}
-                      >
-                        {busy ? "Creating…" : "Create account"}
-                        </button>
-                        </form>
-                        </section>
+                      <div className="user-form-actions">
+                        <button
+                        type="submit"
+                        className="btn-primary"
+                        disabled={busy || !canManageUsers}
+                        title={!canManageUsers ? "Administrator access required" : undefined}
+                        >
+                          {busy ? "Creating…" : "Create account"}
+                          </button>
+                          </div>
+                          </form>
+                          </section>
 
       <section className="panel">
         <h2>Existing accounts</h2>

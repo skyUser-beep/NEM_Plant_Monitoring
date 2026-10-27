@@ -299,3 +299,10 @@
     grid-column: 1;
   }
 }
+
+.rule-library-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}

@@ -29,6 +29,7 @@ from app.models import (
     MonitoringEvent,
     MonitoringRule,
     MonitoringRuleTemplate,
+    MonitoringRuleTemplateRequest,
     Reading,
     RuleCounterState,
     RuleCollection,
@@ -552,6 +553,190 @@ def _validate_template_collection(
             raise HTTPException(status_code=422,detail="A rule collection can contain no more than five rules",)
 
 
+def _rule_template_request_row(
+    item: MonitoringRuleTemplateRequest,
+) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "name": item.name,
+        "description": item.description,
+        "rule_type": item.rule_type,
+        "required_variable_types": item.required_variable_types,
+        "variable_key": item.variable_key,
+        "operator": item.operator,
+        "threshold": float(item.threshold) if item.threshold is not None else None,
+        "parameters": item.parameters,
+        "severity": item.severity,
+        "is_enabled": item.is_enabled,
+        "evaluation_interval_seconds": item.evaluation_interval_seconds,
+        "stale_after_seconds": item.stale_after_seconds,
+        "collection_id": item.collection_id,
+        "requested_by": item.requested_by,
+        "status": item.status,
+        "reviewed_by": item.reviewed_by,
+        "reviewed_at": (
+            item.reviewed_at.isoformat() if item.reviewed_at else None
+        ),
+        "review_comment": item.review_comment,
+        "created_at": item.created_at.isoformat() if item.created_at else None,
+    }
+
+
+def _authenticated_user(request: Request, session: Session) -> User:
+    user_id = getattr(request.state, "auth_user_id", None)
+    user = session.get(User, user_id) if user_id is not None else None
+
+    if user is None or not user.is_active:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    return user
+
+
+@router.post("/rule-template-requests", status_code=201)
+def submit_rule_template_request(
+    payload: RuleTemplateCreate,
+    request: Request,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    user = _authenticated_user(request, session)
+
+    if user.role != "Supervisor":
+        raise HTTPException(
+            status_code=403,
+            detail="Only Supervisors can suggest reusable monitoring rules",
+        )
+
+    _validate_template_collection(session, payload.collection_id)
+
+    item = MonitoringRuleTemplateRequest(
+        **payload.model_dump(),
+        requested_by=user.id,
+        status="pending",
+    )
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+
+    return _rule_template_request_row(item)
+
+
+@router.get("/rule-template-requests")
+def list_rule_template_requests(
+    request: Request,
+    status: str | None = None,
+    session: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    user = _authenticated_user(request, session)
+
+    if user.role != "Administrator":
+        raise HTTPException(
+            status_code=403,
+            detail="Only Administrators can review rule suggestions",
+        )
+
+    query = select(MonitoringRuleTemplateRequest)
+
+    if status:
+        if status not in {"pending", "approved", "declined"}:
+            raise HTTPException(status_code=422, detail="Invalid request status")
+        query = query.where(MonitoringRuleTemplateRequest.status == status)
+
+    items = session.scalars(
+        query.order_by(
+            MonitoringRuleTemplateRequest.created_at.desc(),
+            MonitoringRuleTemplateRequest.id.desc(),
+        )
+    ).all()
+
+    return [_rule_template_request_row(item) for item in items]
+
+
+@router.post("/rule-template-requests/{request_id}/approve")
+def approve_rule_template_request(
+    request_id: int,
+    request: Request,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    user = _authenticated_user(request, session)
+
+    if user.role != "Administrator":
+        raise HTTPException(status_code=403, detail="Administrator access required")
+
+    item = session.scalar(
+        select(MonitoringRuleTemplateRequest)
+        .where(MonitoringRuleTemplateRequest.id == request_id)
+        .with_for_update()
+    )
+
+    if item is None:
+        raise HTTPException(status_code=404, detail="Rule suggestion was not found")
+
+    if item.status != "pending":
+        raise HTTPException(status_code=409, detail="This suggestion has already been reviewed")
+
+    _validate_template_collection(session, item.collection_id)
+
+    template = MonitoringRuleTemplate(
+        name=item.name,
+        description=item.description,
+        rule_type=item.rule_type,
+        required_variable_types=item.required_variable_types,
+        variable_key=item.variable_key,
+        operator=item.operator,
+        threshold=item.threshold,
+        parameters=item.parameters,
+        severity=item.severity,
+        is_enabled=item.is_enabled,
+        evaluation_interval_seconds=item.evaluation_interval_seconds,
+        stale_after_seconds=item.stale_after_seconds,
+        collection_id=item.collection_id,
+    )
+
+    session.add(template)
+    item.status = "approved"
+    item.reviewed_by = user.id
+    item.reviewed_at = datetime.now(timezone.utc)
+    session.commit()
+    session.refresh(template)
+
+    return {
+        "status": "approved",
+        "request_id": item.id,
+        "template": RuleTemplateRead.model_validate(template).model_dump(mode="json"),
+    }
+
+
+@router.post("/rule-template-requests/{request_id}/decline")
+def decline_rule_template_request(
+    request_id: int,
+    request: Request,
+    session: Session = Depends(get_db),
+) -> dict[str, Any]:
+    user = _authenticated_user(request, session)
+
+    if user.role != "Administrator":
+        raise HTTPException(status_code=403, detail="Administrator access required")
+
+    item = session.scalar(
+        select(MonitoringRuleTemplateRequest)
+        .where(MonitoringRuleTemplateRequest.id == request_id)
+        .with_for_update()
+    )
+
+    if item is None:
+        raise HTTPException(status_code=404, detail="Rule suggestion was not found")
+
+    if item.status != "pending":
+        raise HTTPException(status_code=409, detail="This suggestion has already been reviewed")
+
+    item.status = "declined"
+    item.reviewed_by = user.id
+    item.reviewed_at = datetime.now(timezone.utc)
+    session.commit()
+    session.refresh(item)
+
+    return _rule_template_request_row(item)
+    
 #Creating a template not an asset-specific rule - templates are reusable definitions that can be assigned to multiple assets
 @router.post("/rule-templates", response_model=RuleTemplateRead, status_code=201)
 def create_rule_template(

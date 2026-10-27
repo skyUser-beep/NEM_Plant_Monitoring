@@ -268,6 +268,53 @@ export function initialTemplate(template) {
   };
 }
 
+
+const SUPERVISOR_CYCLE_FIELDS = [
+  "cycle_warning_threshold_1",
+  "cycle_warning_threshold_2",
+  "cycle_alert_threshold",
+];
+
+const SUPERVISOR_RUNTIME_FIELDS = [
+  "runtime_warning_hours",
+  "runtime_warning_2_hours",
+  "runtime_alert_hours",
+];
+
+function getSupervisorEditableFields(template) {
+  if (!template) return [];
+
+  const values = initialTemplate(template);
+
+  const isCycleRule =
+    template.rule_type === "boolean_count_threshold" ||
+    (
+      values.rule_type === "parameter_threshold" &&
+      values.variable_type === "boolean" &&
+      values.boolean_behavior === "cycle_count"
+    );
+
+  const isRuntimeRule =
+    template.rule_type === "runtime_duration" ||
+    (
+      values.rule_type === "interval_based" &&
+      (
+        template.required_variable_types?.includes("boolean") ||
+        values.runtime_variable_type === "boolean"
+      )
+    );
+
+  if (isCycleRule) {
+    return SUPERVISOR_CYCLE_FIELDS;
+  }
+
+  if (isRuntimeRule) {
+    return SUPERVISOR_RUNTIME_FIELDS;
+  }
+
+  return [];
+}
+
 export function templatePayload(values) {
   const isBooleanRunning =
     values.rule_type === "parameter_threshold" &&
@@ -368,6 +415,9 @@ function AssignmentModal({ template, onClose, onComplete }) {
   const [saving, setSaving] = useState(false);
   const [review, setReview] = useState(false);
   const [error, setError] = useState("");
+  const [suggesting, setSuggesting] = useState(false);
+  const [ruleRequests, setRuleRequests] = useState([]);
+  const [reviewingId, setReviewingId] = useState(null);
 
   useEffect(() => {
     const onKeyDown = (event) => {
@@ -385,6 +435,15 @@ function AssignmentModal({ template, onClose, onComplete }) {
       .finally(() => alive && setLoading(false));
     return () => { alive = false; };
   }, []);
+
+  
+useEffect(() => {
+  if (isAdministrator) {
+    loadPendingRequests();
+  } else {
+    setRuleRequests([]);
+  }
+}, [isAdministrator]);
 
   useEffect(() => {
     let alive = true;
@@ -503,7 +562,7 @@ function AssignmentModal({ template, onClose, onComplete }) {
 }
 
 export default function RuleLibrary() {
-  const { user } = useAuth();
+ const { user } = useAuth();
  const isAdministrator = user?.role === "Administrator";
  const isSupervisor = user?.role === "Supervisor";
  const isOperator = user?.role === "Operator";
@@ -520,10 +579,14 @@ export default function RuleLibrary() {
   const location = useLocation();
 
   const [templates, setTemplates] = useState(null);
+  const [ruleRequests, setRuleRequests] = useState([]);
+  const [requestsLoading, setRequestsLoading] = useState(false);
+  const [reviewingId, setReviewingId] = useState(null);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [suggesting, setSuggesting] = useState(false);
   const [assigning, setAssigning] = useState(null);
   const [busyId, setBusyId] = useState(null);
   const [message, setMessage] = useState({ text: "", error: false });
@@ -533,9 +596,33 @@ export default function RuleLibrary() {
   };
 
 
+const loadPendingRequests = async () => {
+  if (!isAdministrator) return;
+
+  setRequestsLoading(true);
+
+  try {
+    const result = await api.get(
+      "/rule-template-requests?status=pending"
+    );
+
+    setRuleRequests(Array.isArray(result) ? result : []);
+  } catch (error) {
+    setMessage({
+      text:
+        error.message ||
+        "Could not load pending rule suggestions.",
+      error: true,
+    });
+  } finally {
+    setRequestsLoading(false);
+  }
+};
+
 useEffect(() => {
   if (location.state?.openCreate) {
     if (canCreateRules) {
+      setSuggesting(false);
       setEditing(null);
       setModalOpen(true);
     }
@@ -545,7 +632,12 @@ useEffect(() => {
       state: {},
     });
   }
-}, [location.pathname, location.state, navigate, canCreateRules]);
+}, [
+  location.pathname,
+  location.state,
+  navigate,
+  canCreateRules,
+]);
 
   useEffect(() => {
     let alive = true;
@@ -566,33 +658,96 @@ useEffect(() => {
   }, [templates, search, status]);
 
   const save = async (values) => {
-    if (editing ? !canEditRules : !canCreateRules) return;
+    if (suggesting) {
+      if (!isSupervisor || editing) return;
+    } else if (editing ? !canEditRules : !canCreateRules) {
+      return;
+    }
     let payload;
     
-    if (editing && isRestrictedEditor) {
-      if (
-        !supportsCurrentRuleEditor(editing) ||
-        editing.rule_type !== "parameter_threshold" ||
-        editing.threshold == null
-      ) {
+    if (editing && isSupervisor) {
+      const editableFields = getSupervisorEditableFields(editing);
+      if (editableFields.length === 0) {
         throw new Error(
-          "Only the threshold and check interval of a numeric parameter rule can be edited with your role."
+          "Supervisors can edit only cycle-count or running-time thresholds for supported rules."
         );
       }
-      const newThreshold = Number(values.threshold);
-      if (!Number.isFinite(newThreshold)) {
-        throw new Error("Please enter a valid threshold.");
+      const original = initialTemplate(editing);
+      if (
+        editableFields.every((field) =>
+          SUPERVISOR_CYCLE_FIELDS.includes(field)
+      )
+    ) {
+      const warning1 = Number(values.cycle_warning_threshold_1);
+      const warning2 = Number(values.cycle_warning_threshold_2);
+      const alert = Number(values.cycle_alert_threshold);
+
+      if (
+        ![warning1, warning2, alert].every(
+          (value) => Number.isSafeInteger(value) && value > 0
+        ) ||
+        warning1 >= warning2 ||
+        warning2 >= alert
+      ) {
+        throw new Error(
+          "Cycle thresholds must be positive whole numbers in increasing order."
+        );
       }
-      const newInterval = Number(values.evaluation_interval_seconds);
-      if (!Number.isFinite(newInterval) || newInterval < 1) {
-        throw new Error("Please enter a valid check interval.");
-      }
+
       payload = {
-        ...templatePayload({
-        ...initialTemplate(editing),
-        threshold: String(newThreshold),
-        evaluation_interval_seconds: newInterval,
-      }),
+        ...editing,
+        parameters: {
+          ...(editing.parameters || {}),
+          warning_thresholds: [warning1, warning2],
+          alert_threshold: alert,
+        },
+      };
+    } else {
+      const warning1 = Number(values.runtime_warning_hours) * 3600;
+      const warning2 = Number(values.runtime_warning_2_hours) * 3600;
+      const alert = Number(values.runtime_alert_hours) * 3600;
+
+      if (
+        ![warning1, warning2, alert].every(
+          (value) => Number.isFinite(value) && value > 0
+        ) ||
+        warning1 >= warning2 ||
+        warning2 >= alert
+      ) {
+        throw new Error(
+          "Running-time thresholds must be positive and strictly increasing."
+        );
+      }
+
+      payload = {
+        ...editing,
+        parameters: {
+          ...(editing.parameters || {}),
+          warning_thresholds_seconds: [warning1, warning2],
+          alert_threshold_seconds: alert,
+        },
+      };
+    }
+
+    void original;
+  } else if (editing && isRestrictedEditor) {
+    if (
+      !supportsCurrentRuleEditor(editing) ||
+      editing.rule_type !== "parameter_threshold" ||
+      editing.threshold == null
+    ) {
+      throw new Error(
+        "Only the threshold of a numeric parameter rule can be edited with your role."
+      );
+    }
+
+    const newThreshold = Number(values.threshold);
+
+    if (!Number.isFinite(newThreshold)) {
+      throw new Error("Please enter a valid threshold.");
+    }
+
+    payload = {
       ...editing,
       threshold: newThreshold,
       evaluation_interval_seconds: newInterval,
@@ -605,22 +760,79 @@ useEffect(() => {
       collection_id: editing?.collection_id ?? null,
     };
   }
-  
-  if (editing) {
-    await api.put(`/rule-templates/${editing.id}`, payload);
-  } else {
-    await api.post("/rule-templates", payload);
-  }
-  
-  setModalOpen(false);
-  setEditing(null);
+
+if (suggesting) {
+  const suggestionPayload = templatePayload(values);
+
+  await api.post("/rule-template-requests", {
+    ...suggestionPayload,
+    collection_id: null,
+  });
+
   setMessage({
-    text: `Rule ${editing ? "updated" : "created"} successfully.`,
+    text: "Rule suggestion submitted for Administrator review.",
     error: false,
   });
-  await load();
+} else if (editing) {
+  await api.put(`/rule-templates/${editing.id}`, payload);
+
+  setMessage({
+    text: "Rule updated successfully.",
+    error: false,
+  });
+} else {
+  await api.post("/rule-templates", payload);
+
+  setMessage({
+    text: "Rule created successfully.",
+    error: false,
+  });
+}
+
+setModalOpen(false);
+setEditing(null);
+setSuggesting(false);
+await load();
 };
 
+
+const reviewRequest = async (request, action) => {
+  if (!isAdministrator || reviewingId !== null) return;
+
+  const requestId = request.id;
+
+  setReviewingId(requestId);
+  setMessage({ text: "", error: false });
+
+  try {
+    await api.post(
+      `/rule-template-requests/${requestId}/${action}`,
+      {}
+    );
+
+    setMessage({
+      text:
+        action === "approve"
+          ? `Suggestion "${request.name}" approved and added to the rule library.`
+          : `Suggestion "${request.name}" declined.`,
+      error: false,
+    });
+
+    await Promise.all([
+      load(),
+      loadPendingRequests(),
+    ]);
+  } catch (error) {
+    setMessage({
+      text:
+        error.message ||
+        `Could not ${action} this suggestion.`,
+      error: true,
+    });
+  } finally {
+    setReviewingId(null);
+  }
+};
 
   const remove = async (template) => {
     if (
@@ -652,12 +864,164 @@ useEffect(() => {
       <div className="rule-library-heading">
         <div>
           <h1 className="page-title">Monitoring Rule Library</h1>
-          <p className="muted">Create reusable monitoring rules, then assign them to assets. Assigned rules start inactive.</p>
-        </div>
-        <button type="button"className="btn-primary"disabled={isSupervisor || !canCreateRules}title={isSupervisor? "Supervisors cannot create monitoring rules": "Create new rule"}onClick={() => {if (isSupervisor || !canCreateRules) return;setEditing(null);setModalOpen(true);}}><Plus size={17} />New rule</button>
+          <p className="muted">
+            Create reusable monitoring rules, then assign them to assets.
+            Assigned rules start inactive.
+            </p>
+            </div>
+<div className="rule-library-heading-actions">
+  <button
+    type="button"
+    className="btn-primary"
+    disabled={!isAdministrator}
+    title={
+      isAdministrator
+        ? "Create new rule"
+        : "Only Administrators can create rules directly."
+    }
+    onClick={() => {
+      if (!isAdministrator) return;
+      setSuggesting(false);
+      setEditing(null);
+      setModalOpen(true);
+    }}
+  >
+    <Plus size={17} />
+    New rule
+  </button>
+
+  {isSupervisor && (
+    <button
+      type="button"
+      className="btn-primary"
+      onClick={() => {
+        setSuggesting(true);
+        setEditing(null);
+        setModalOpen(true);
+      }}
+    >
+      <Plus size={17} />
+      Suggest new rule
+    </button>
+  )}
+</div>
+                  </div>
+
+      {message.text && (<p className={"notice" + (message.error ? " error" : "")}role={message.error ? "alert" : "status"}>{message.text}</p>)}
+      
+{isAdministrator && (
+  <section className="rule-library-panel pending-suggestions">
+    <div className="rule-library-tools">
+      <div>
+        <h2>Pending Suggestions</h2>
+        <p className="muted">
+          Review monitoring rules suggested by Supervisors.
+        </p>
       </div>
 
-      {message.text && <p className={"notice" + (message.error ? " error" : "")} role={message.error ? "alert" : "status"}>{message.text}</p>}
+      <button
+        type="button"
+        className="btn-outline"
+        onClick={loadPendingRequests}
+        disabled={requestsLoading || reviewingId !== null}
+      >
+        {requestsLoading ? "Refreshing…" : "Refresh"}
+      </button>
+    </div>
+
+    {requestsLoading && ruleRequests.length === 0 ? (
+      <p className="muted">
+        Loading pending suggestions…
+      </p>
+    ) : ruleRequests.length === 0 ? (
+      <EmptyState
+        art={false}
+        title="No pending suggestions"
+        lines={[
+          "New suggestions submitted by Supervisors will appear here.",
+        ]}
+      />
+    ) : (
+      <div className="rule-library-list">
+        {ruleRequests.map((request) => (
+          <article
+            className="rule-library-card"
+            key={request.id}
+          >
+            <div className="rule-library-card-icon">
+              <Activity size={19} />
+            </div>
+
+            <div className="rule-library-card-main">
+              <div className="rule-library-card-title">
+                <h2>{request.name}</h2>
+                <span className="rule-library-status disabled">
+                  Pending
+                </span>
+              </div>
+
+              <p>
+                {request.description ||
+                  "No description provided."}
+              </p>
+
+              <small>
+                {displayType(request)} · {templateSummary(request)}
+              </small>
+
+              <p>
+                <strong>Severity:</strong>{" "}
+                {request.severity}
+              </p>
+
+              {request.variable_key && (
+                <p>
+                  <strong>Preferred variable:</strong>{" "}
+                  {request.variable_key}
+                </p>
+              )}
+
+              {request.created_at && (
+                <small>
+                  Submitted:{" "}
+                  {new Date(
+                    request.created_at
+                  ).toLocaleString()}
+                </small>
+              )}
+            </div>
+
+            <div className="rule-library-actions">
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() =>
+                  reviewRequest(request, "approve")
+                }
+                disabled={reviewingId !== null}
+              >
+                {reviewingId === request.id
+                  ? "Processing…"
+                  : "Approve"}
+              </button>
+
+              <button
+                type="button"
+                className="btn-outline danger"
+                onClick={() =>
+                  reviewRequest(request, "decline")
+                }
+                disabled={reviewingId !== null}
+              >
+                Decline
+              </button>
+            </div>
+          </article>
+        ))}
+      </div>
+    )}
+  </section>
+)}
 
       <section className="rule-library-panel">
         <div className="rule-library-tools">
@@ -682,7 +1046,7 @@ useEffect(() => {
                 </div>
                 <div className="rule-library-actions">
                   <button className="btn-outline" onClick={() => setAssigning(template)} disabled={!canAssignRules || !template.is_enabled || needsRuntimeThresholdConfiguration(template)} title={!canAssignRules ? "You do not have permission to assign rules." : needsRuntimeThresholdConfiguration(template) ? "Edit this rule and configure running-time thresholds before assigning it." : undefined}><Copy size={15} /> Assign rule</button>
-                  <button className="btn-outline" onClick={() => { setEditing(template); setModalOpen(true); }} disabled={!canEditRules} title={!canEditRules ? "Only Administrators and Supervisors can edit reusable rules." : undefined}><Pencil size={15} /> Edit</button>
+                  <button className="btn-outline"onClick={() => {setSuggesting(false);setEditing(template);setModalOpen(true);}}disabled={!canEditRules}title={!canEditRules? "Only Administrators and Supervisors can edit reusable rules.": undefined}><Pencil size={15} />Edit</button>
                   <button className="btn-outline danger" onClick={() => remove(template)} disabled={busyId === template.id || !isAdministrator} title={!isAdministrator ? "Administrator access required to delete reusable rules." : undefined}>{busyId === template.id ? "Deleting…" : <><Trash2 size={15} /> Delete</>}</button>
                 </div>
               </article>
@@ -690,47 +1054,77 @@ useEffect(() => {
           </div>
         )}
       </section>
-
-      {modalOpen && <CreateModal
-        title={editing ? "Edit rule" : "Create reusable rule"}
-        intro={
-          editing && !supportsCurrentRuleEditor(editing)
-            ? `${displayType(editing)} is a legacy rule type. Its evaluation settings will be preserved while you edit its name, description, severity, and availability.`
-            : "Create a reusable rule, then assign it to one or more assets."
-        }
-        fields={
-          editing && !supportsCurrentRuleEditor(editing)
-          ? (
-            isRestrictedEditor
-            ? LEGACY_EDIT_FIELDS.map((field) => ({
+     
+{modalOpen && (
+  <CreateModal
+    title={
+      editing
+        ? "Edit rule"
+        : suggesting
+          ? "Suggest a new monitoring rule"
+          : "Create reusable rule"
+    }
+    intro={
+      suggesting
+        ? "Submit your proposed monitoring rule for Administrator review. It will not enter the reusable library until approved."
+        : editing && !supportsCurrentRuleEditor(editing)
+          ? `${displayType(editing)} is a legacy rule type. Its evaluation settings will be preserved while you edit its name, description, severity, and availability.`
+          : "Create a reusable rule, then assign it to one or more assets."
+    }
+    fields={
+      editing && !supportsCurrentRuleEditor(editing)
+        ? LEGACY_EDIT_FIELDS.map((field) => ({
             ...field,
-            disabled: true,
+            disabled: isSupervisor,
           }))
-          : LEGACY_EDIT_FIELDS
-        ): (
-          editing && isRestrictedEditor
+        : editing && isSupervisor
           ? FIELDS.map((field) => ({
-            ...field,
-            disabled: !["threshold", "evaluation_interval_seconds"].includes(field.key),
-          }))
+              ...field,
+              disabled: !getSupervisorEditableFields(editing).includes(
+                field.key
+              ),
+            }))
           : FIELDS
-        )
-      }
-        initialValues={initialTemplate(editing)}
-        submitLabel={editing ? "Save rule" : "Create rule"}
-        onSubmit={save}
-        disabled={editing ? !canEditRules : !canCreateRules}
-        onClose={() => { setModalOpen(false); setEditing(null); }}
-      />}
-      {assigning && <AssignmentModal
-        template={assigning}
-        onClose={() => setAssigning(null)}
-        onComplete={async (result) => {
-          const made = result.created?.length || 0;
-          const duplicates = result.already_assigned?.length || 0;
-          setMessage({ text: `Assigned to ${made} asset(s); ${duplicates} already had the same rule.`, error: false });
-        }}
-      />}
-    </main>
-  );
+    }
+    initialValues={initialTemplate(editing)}
+    submitLabel={
+      editing
+        ? "Save rule"
+        : suggesting
+          ? "Submit suggestion"
+          : "Create rule"
+    }
+    onSubmit={save}
+    disabled={
+      suggesting
+        ? !isSupervisor
+        : editing
+          ? !canEditRules
+          : !canCreateRules
+    }
+    onClose={() => {
+      setModalOpen(false);
+      setEditing(null);
+      setSuggesting(false);
+    }}
+  />
+)}
+
+{assigning && (
+  <AssignmentModal
+    template={assigning}
+    onClose={() => setAssigning(null)}
+    onComplete={async (result) => {
+      const made = result.created?.length || 0;
+      const duplicates = result.already_assigned?.length || 0;
+
+      setMessage({
+        text: `Assigned to ${made} asset(s); ${duplicates} already had the same rule.`,
+        error: false,
+      });
+    }}
+  />
+)}
+</main>
+);
 }

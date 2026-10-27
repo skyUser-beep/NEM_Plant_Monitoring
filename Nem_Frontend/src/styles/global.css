@@ -1337,3 +1337,11 @@ html[data-theme="dark"] .topbar > .icon-btn:hover {
     min-height: 36px;
   }
 }
+
+.user-form-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  margin-top: 8px;
+}
