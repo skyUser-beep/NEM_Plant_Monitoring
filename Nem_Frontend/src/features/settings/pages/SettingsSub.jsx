@@ -8,7 +8,7 @@ import {
   EmptyState,
   useConfirmation,
 } from "../../../components/common/UI.jsx";
-import { BackIcon } from "../../../components/common/Icons.jsx";
+import { BackIcon, EditIcon } from "../../../components/common/Icons.jsx";
 
 const TITLES = {
   user: "User information",
@@ -29,6 +29,13 @@ const FORMS = {
 function UserInfo() {
   const { user, refreshUser } = useAuth();
   const [err, setErr] = useState("");
+  const [isEditing, setIsEditing] = useState(false);
+  const [editContact, setEditContact] = useState(user?.contact_number || "");
+  const [editEmail, setEditEmail] = useState(user?.email_address || "");
+  const [contactError, setContactError] = useState("");
+  const [emailError, setEmailError] = useState("");
+  const [saveMsg, setSaveMsg] = useState("");
+  const canEdit = user?.role === "Administrator";
   useEffect(() => {
     let active = true;
     refreshUser().catch((e) => {
@@ -37,29 +44,174 @@ function UserInfo() {
     return () => { active = false; };
   }, [refreshUser]);
   if (err) return <div className="panel"><p className="notice error flush" role="alert">Could not load the profile: {err}</p></div>;
-  if (!user) return <div className="loading">LoadingÃ¢â‚¬Â¦</div>;
+  if (!user) return <div className="loading">Loading…</div>;
 
   const displayName = user.username || "—";
   const role = user.role || "—";
+
+  const INDIAN_PHONE_REGEX = /^(\+91|91|0)?[6-9]\d{9}$/;
+  const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  const normalizePhone = (value) => {
+    const digits = value.replace(/\D/g, "");
+    if (digits.startsWith("91") && digits.length === 12) return digits.slice(2);
+    if (digits.startsWith("0") && digits.length === 11) return digits.slice(1);
+    return digits;
+  };
+
+  const validatePhone = (value) => {
+    const trimmed = value.trim();
+    if (!trimmed) return { valid: true, normalized: "" };
+    const digits = trimmed.replace(/\D/g, "");
+    if (!INDIAN_PHONE_REGEX.test(trimmed)) return { valid: false, normalized: "" };
+    return { valid: true, normalized: normalizePhone(trimmed) };
+  };
+
+  const validateEmail = (value) => {
+    const trimmed = value.trim();
+    if (!trimmed) return { valid: true, normalized: "" };
+    if (!EMAIL_REGEX.test(trimmed)) return { valid: false, normalized: "" };
+    return { valid: true, normalized: trimmed };
+  };
+
+  const saveContact = async () => {
+    setSaveMsg("");
+    setContactError("");
+    setEmailError("");
+    const contactResult = validatePhone(editContact);
+    if (!contactResult.valid) {
+      setContactError("Enter a valid Indian mobile number (10 digits, optionally prefixed with +91).");
+      return;
+    }
+    const emailResult = validateEmail(editEmail);
+    if (!emailResult.valid) {
+      setEmailError("Enter a valid email address (e.g., name@domain.com).");
+      return;
+    }
+    try {
+      await api.patch(`/auth/users/${user.id}`, {
+        contact_number: contactResult.normalized || null,
+        email_address: emailResult.normalized || null,
+      });
+      await refreshUser();
+      setEditContact(user?.contact_number || "");
+      setEditEmail(user?.email_address || "");
+      setIsEditing(false);
+      setSaveMsg("Contact details saved.");
+    } catch (e) {
+      setSaveMsg("Could not save contact details: " + (e.message || e));
+    }
+  };
+
   return (
     <div className="panel-white profile">
-      <div className="profile-head">
+      <div className="profile-head" style={{ position: "relative", display: "flex", alignItems: "center", gap: 12 }}>
         <div className="avatar">{displayName.charAt(0).toUpperCase()}</div>
         <div className="profile-who">
-          <div className="profile-name">{displayName}</div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div className="profile-name">{displayName}</div>
+          </div>
           <span className="badge role">{role}</span>
         </div>
+        {canEdit && (
+          <button
+            type="button"
+            onClick={() => {
+              setEditContact(user?.contact_number || "");
+              setEditEmail(user?.email_address || "");
+              setIsEditing(true);
+            }}
+            title="Edit contact details"
+            className="btn-outline"
+            style={{
+              position: "absolute",
+              right: 12,
+              top: "50%",
+              transform: "translateY(-50%)",
+              height: "32px",
+              padding: "0 10px",
+              fontSize: "13px",
+              borderRadius: "4px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <EditIcon size={14} aria-hidden="true" />
+          </button>
+        )}
       </div>
 
-      <dl className="profile-list">
-        <dt>Name</dt>
-        <dd>{displayName}</dd>
-        <dt>Role</dt>
-        <dd>{role}</dd>
-        <dt>Account status</dt>
-        <dd>{user.is_active ? "Active" : "Disabled"}</dd>
-      </dl>
-      <p className="hint">Your name and role are taken from your signed-in account. An Administrator can update your role.</p>
+    <dl className="profile-list">
+  <dt>Name</dt>
+  <dd>{displayName}</dd>
+
+  <dt>Role</dt>
+  <dd>{role}</dd>
+
+  <dt>Account status</dt>
+  <dd>{user.is_active ? "Active" : "Disabled"}</dd>
+
+  <dt>Contact number</dt>
+  <dd>
+    {isEditing ? (
+      <>
+        <input
+          type="tel"
+          value={editContact}
+          onChange={(e) => setEditContact(e.target.value)}
+          placeholder="Enter contact number"
+          autoComplete="tel"
+          maxLength={20}
+        />
+        {contactError && <span className="notice error" style={{ display: "block", marginTop: 4, fontSize: "12px" }}>{contactError}</span>}
+      </>
+    ) : (
+      user?.contact_number || "Not provided"
+    )}
+  </dd>
+
+  <dt>Email address</dt>
+  <dd>
+    {isEditing ? (
+      <>
+        <input
+          type="email"
+          value={editEmail}
+          onChange={(e) => setEditEmail(e.target.value)}
+          placeholder="Enter email address"
+          autoComplete="email"
+          maxLength={254}
+        />
+        {emailError && <span className="notice error" style={{ display: "block", marginTop: 4, fontSize: "12px" }}>{emailError}</span>}
+      </>
+    ) : (
+      user?.email_address || "Not provided"
+    )}
+  </dd>
+</dl>
+
+{isEditing && canEdit ? (
+  <div style={{ marginTop: 12, display: "flex", gap: 10, alignItems: "center" }}>
+    <button
+      type="button"
+      className="btn-primary"
+      onClick={saveContact}
+      disabled={!editContact.trim() && !editEmail.trim()}
+    >
+      Save
+    </button>
+    <button type="button" className="btn-outline" onClick={() => setIsEditing(false)}>
+      Cancel
+    </button>
+    {saveMsg && <span className="notice" role="status" style={{ marginLeft: 10 }}>{saveMsg}</span>}
+  </div>
+) : null}
+
+<p className="hint">
+  Your name and role are taken from your signed-in account.
+  An Administrator can update your role.
+</p>
     </div>
   );
 }

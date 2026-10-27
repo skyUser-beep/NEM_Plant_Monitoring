@@ -31,6 +31,7 @@ import {
   Trash2,
   Copy,
   Power,
+  Download,
 } from "lucide-react";
 import ReusableRuleModal from "./ReusableRuleModal.jsx";
 import RuleCollectionCreateModal from "./RuleCollectionCreateModal.jsx";
@@ -343,6 +344,7 @@ export default function ConfigSub() {
   const canManageConfiguration = user?.role === "Administrator";
   const canCreateRulesAndDocuments =
     canManageConfiguration || user?.role === "Supervisor";
+  const isSupervisor = user?.role === "Supervisor";
   const confirm = useConfirmation();
   const { sub } = useParams();
   const nav = useNavigate();
@@ -754,47 +756,36 @@ export default function ConfigSub() {
     await load();
   };
 
-  const edit = async (values) => {
-    if (!canManageConfiguration) return;
-    const original = editingRule;
 
-    if (!original) return;
+const edit = async (values) => {
+  if (!canManageConfiguration) return;
 
-    const variable = numericVariables.find(
-      (item) => item.id === Number(values.variable_id)
-    );
+  const original = editingRule;
+  if (!original) return;
 
-    if (!variable) {
-      throw new Error("Select an active numeric variable.");
-    }
+  const threshold = Number(values.threshold);
 
-    const threshold = Number(values.threshold);
+  if (
+    values.threshold === "" ||
+    !Number.isFinite(threshold)
+  ) {
+    throw new Error("Enter a valid numeric threshold.");
+  }
 
-    if (!Number.isFinite(threshold)) {
-      throw new Error("Enter a valid numeric threshold.");
-    }
+  // Edit mode mein sirf threshold update hoga.
+  await api.patch(`/rules/${original.id}`, {
+    threshold,
+  });
 
-    await api.patch(`/rules/${original.id}`, {
-      name: values.name.trim(),
-      description: values.description?.trim() || null,
-      target_asset_id: variable.asset_id,
-      variable_id: variable.id,
-      rule_type: original.rule_type,
-      operator: values.operator,
-      threshold,
-      parameters: original.parameters ?? null,
-      severity: values.severity,
-    });
+  setOpen(false);
+  setEditingRule(null);
+  setMsg({
+    text: "Rule threshold updated successfully.",
+    error: false,
+  });
 
-    setOpen(false);
-    setEditingRule(null);
-    setMsg({
-      text: "Rule updated successfully.",
-      error: false,
-    });
-
-    await load();
-  };
+  await load();
+};
 
   const duplicate = async (rule) => {
     if (!canManageConfiguration) return;
@@ -982,7 +973,7 @@ export default function ConfigSub() {
             <button
               type="button"
               className="btn-primary"
-              disabled={!canCreateRulesAndDocuments}
+              disabled={isSupervisor || !canCreateRulesAndDocuments}
               title={!canCreateRulesAndDocuments ? "Only Administrators and Supervisors can create instructions." : undefined}
               onClick={() =>
                 nav("/configuration/instructions/new")
@@ -993,33 +984,39 @@ export default function ConfigSub() {
             </button>
           )}
 
-          <button
-            type="button"
-            className="btn-primary"
-            disabled={
-              !canManageConfiguration &&
-              !(canCreateRulesAndDocuments && ["rules", "documents"].includes(sub))
-            }
-            title={
-              !canManageConfiguration && !canCreateRulesAndDocuments
-                ? "Only Administrators and Supervisors can create rules and documents."
-                : undefined
-            }
-            onClick={() => {
-              setEditingRule(null);
-              setMsg({ text: "", error: false });
+<button
+  type="button"
+  className="btn-primary"
+  disabled={
+    isSupervisor ||
+    (
+      !canManageConfiguration &&
+      !(canCreateRulesAndDocuments &&
+        ["rules", "documents"].includes(sub))
+    )
+  }
+  title={
+    isSupervisor
+      ? "Supervisors cannot create documents or instructions."
+      : !canManageConfiguration && !canCreateRulesAndDocuments
+        ? "Only Administrators and Supervisors can create rules and documents."
+        : undefined
+  }
+  onClick={() => {
+    setEditingRule(null);
+    setMsg({ text: "", error: false });
 
-              if (sub === "documents") {
-                nav("/configuration/documents/new");
-                return;
-              }
+    if (sub === "documents") {
+      nav("/configuration/documents/new");
+      return;
+    }
 
-              setOpen(true);
-            }}
-          >
-            <PlusCircle size={17} />
-            {cfg.button}
-          </button>
+    setOpen(true);
+  }}
+>
+  <PlusCircle size={17} />
+  {cfg.button}
+</button>
         </div>
       </div>
       {!canManageConfiguration && (
@@ -1455,11 +1452,17 @@ export default function ConfigSub() {
                 : "Selecting a variable assigns the rule to that variable's machine. Backend validation may prevent changing a rule's target after evaluation has started."
               : undefined
           }
-          fields={
-            sub === "rules"
-              ? ruleFields
-              : fieldsFor(sub, variables)
-          }
+          
+fields={
+  sub === "rules" && editingRule
+    ? ruleFields.map((field) => ({
+        ...field,
+        disabled: field.key !== "threshold",
+      }))
+    : sub === "rules"
+      ? ruleFields
+      : fieldsFor(sub, variables)
+}
           initialValues={
             sub === "rules" && editingRule
               ? {

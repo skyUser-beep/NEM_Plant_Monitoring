@@ -1,23 +1,48 @@
 # create,view,update and filter machine monitoring rules
+from decimal import Decimal
+
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from pydantic import ValidationError
 from asyncua import ua
 from asyncua.ua.uaerrors import UaStringParsingError
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.api.routes.auth import get_current_user
 from app.db.session import get_db
-from app.models import Asset, Alert, MonitoringRule, RuleState, Variable
+from app.models import Asset, Alert, MonitoringRule, RuleState, Variable, User
 from app.schemas.rule import RuleCreate, RuleRead, RuleUpdate
 from app.services.monitoring_engine import emit_event, set_rule_enabled_state
 from app.services.monitoring_engine import utc_now
 
 router = APIRouter(prefix="/rules", tags=["monitoring rules"])
 
+# Threshold keys inside `parameters` that a Supervisor may change, per rule type.
+SUPERVISOR_PARAMETER_KEYS: dict[str, frozenset[str]] = {
+    "runtime_duration": frozenset({"warning_thresholds_seconds", "alert_threshold_seconds"}),
+    "boolean_count_threshold": frozenset({"warning_thresholds", "alert_threshold"}),
+}
+
+
+def _field_differs(current, new) -> bool:
+    if isinstance(current, Decimal) or isinstance(new, Decimal):
+        if current is None or new is None:
+            return current is not new
+        return Decimal(str(current)) != Decimal(str(new))
+    return current != new
+
+
+def _validation_message(error: ValidationError) -> str:
+    parts = []
+    for item in error.errors(include_url=False):
+        location = ".".join(str(part) for part in item["loc"])
+        message = str(item["msg"]).removeprefix("Value error, ")
+        parts.append(f"{location}: {message}" if location else message)
+    return "; ".join(parts)
 
 def is_mapping_bypass_enabled(request: Request) -> bool:
     settings = getattr(request.app.state, "settings", None)
     return bool(getattr(settings, "opc_ua_mapping_bypass_enabled", False))
-
 
 #Configured PLC cycle signal
 def configured_cycle_signal_mapping(request: Request,variable_id: int | None,) -> tuple[int, int] | None:
@@ -79,9 +104,7 @@ def validate_targets(
         raise HTTPException(status_code=404, detail=f"Variable {variable_id} was not found")
     if variable is not None and target_asset_id is not None:
         if variable.asset_id != target_asset_id:
-            raise HTTPException(
-                status_code=422, detail="Target variable does not belong to target asset"
-            )
+            raise HTTPException(status_code=422, detail="Target variable does not belong to target asset")
     if rule_type == "parameter_threshold":
         expected_value = (parameters or {}).get("expected_value")
         if isinstance(expected_value, bool):
@@ -92,10 +115,7 @@ def validate_targets(
                 or operator not in {"==", "!=", "eq", "ne"}
                 or threshold is not None
             ):
-                raise HTTPException(
-                    status_code=422,
-                    detail=(
-                        "Boolean parameter thresholds require an active Boolean "
+                raise HTTPException(status_code=422,detail=("Boolean parameter thresholds require an active Boolean "
                         "variable, an equality operator, and a Boolean expected_value"
                     ),
                 )
@@ -119,9 +139,7 @@ def validate_targets(
                 or interval_seconds <= 0
                 or variable_id is not None
             ):
-                raise HTTPException(
-                    status_code=422,
-                    detail=(
+                raise HTTPException(status_code=422,detail=(
                         "Interval-based rules require an asset target, a positive "
                         "interval_seconds value, and no variable target"
                     ),
@@ -154,8 +172,7 @@ def validate_targets(
                 runtime_signal_mapping != (target_asset_id, variable_id)
                 and not bypass_signal_is_valid
             ):
-                raise HTTPException(
-                    status_code=422,
+                raise HTTPException(status_code=422,
                     detail=("Running-time rules must target this asset's configured "
                         "OPC UA running signal or an asset-owned declared Boolean "
                         "running signal while mapping bypass is enabled"
@@ -317,9 +334,7 @@ def list_rules(
         (is_enabled, MonitoringRule.is_enabled),
     ):
         if condition is not None:
-            query, count_query = query.where(column == condition), count_query.where(
-                column == condition
-            )
+            query, count_query = query.where(column == condition), count_query.where(column == condition)
     items = session.scalars(query.order_by(MonitoringRule.id).offset(offset).limit(limit)).all()
     return {
         "items": [RuleRead.model_validate(item) for item in items],
@@ -340,13 +355,66 @@ def update_rule(
     payload: RuleUpdate,
     request: Request,
     session: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> MonitoringRule:
+    # Authorization comes first and is based on the authenticated user only.
+    if user.role == "Operator":
+        raise HTTPException(status_code=403, detail="Operators are not allowed to edit monitoring rules")
+    if user.role not in {"Administrator", "Supervisor"}:
+        raise HTTPException(status_code=403, detail="You are not allowed to edit monitoring rules")
+
     rule = rule_or_404(session, rule_id)
     changes = payload.model_dump(exclude_unset=True)
     if not changes:
         raise HTTPException(status_code=422, detail="Provide at least one field to update")
+
+    # Nested parameters are merged into the stored ones so omitted keys
+    # (for example activation_at) are never cleared by a partial update.
+    if "parameters" in changes:
+        incoming = changes["parameters"]
+        if not isinstance(incoming, dict):
+            raise HTTPException(status_code=422, detail="parameters must be an object")
+        if user.role == "Supervisor":
+            allowed_keys = SUPERVISOR_PARAMETER_KEYS.get(rule.rule_type, frozenset())
+            disallowed = set(incoming) - allowed_keys
+            if disallowed:
+                raise HTTPException(
+                    status_code=403,
+                    detail=(
+                        "Supervisors can only edit threshold parameters. "
+                        f"Restricted parameters: {', '.join(sorted(disallowed))}"
+                    ),
+                )
+        changes["parameters"] = {**(rule.parameters or {}), **incoming}
+
+    # Only genuine modifications count; values equal to the stored ones are no-ops.
+    changes = {
+        field: value
+        for field, value in changes.items()
+        if _field_differs(getattr(rule, field), value)
+    }
+    if not changes:
+        return rule
+
+    if user.role == "Supervisor":
+        allowed_fields = {"evaluation_interval_seconds"}
+        if rule.rule_type in SUPERVISOR_PARAMETER_KEYS:
+            allowed_fields.add("parameters")
+        else:
+            allowed_fields.add("threshold")
+        restricted = set(changes) - allowed_fields
+        if restricted:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Supervisors can only edit threshold and evaluation interval values. "
+                    f"Restricted fields: {', '.join(sorted(restricted))}"
+                ),
+            )
+
     if rule.lifecycle_status == "completed" and changes.get("is_enabled") is True:
         raise HTTPException(status_code=409,detail="Completed rules cannot be reactivated. Create a new rule instead.",)
+
     prospective = {
         key: changes.get(key, getattr(rule, key))
         for key in (
@@ -355,7 +423,10 @@ def update_rule(
             "evaluation_interval_seconds", "stale_after_seconds",
         )
     }
-    validated = RuleCreate.model_validate(prospective)
+    try:
+        validated = RuleCreate.model_validate(prospective)
+    except ValidationError as error:
+        raise HTTPException(status_code=422, detail=_validation_message(error)) from error
     validate_targets(
         session, validated.target_asset_id, validated.variable_id, validated.rule_type,
         validated.operator, validated.threshold, validated.parameters,
@@ -366,14 +437,11 @@ def update_rule(
     # prevent changing targets after evaluation state exits
     target_fields = {"target_asset_id", "variable_id"}
     #Prevent changing targets while alerts are active
-    if target_fields.intersection(changes) and session.scalar(
-        select(RuleState.id).where(RuleState.rule_id == rule.id).limit(1)
-    ):
+    if target_fields.intersection(changes) and session.scalar(select(RuleState.id).where(RuleState.rule_id == rule.id).limit(1)):
         raise HTTPException(status_code=409,detail="A rule target cannot be changed after evaluation state exists",)
-    if target_fields.intersection(changes) and session.scalar(
-        select(Alert.id).where(Alert.rule_id == rule.id, Alert.status == "active").limit(1)
-    ):
+    if target_fields.intersection(changes) and session.scalar(select(Alert.id).where(Alert.rule_id == rule.id, Alert.status == "active").limit(1)):
         raise HTTPException(status_code=409,detail="Resolve active alerts before changing a rule target",)
+
     #Apply the changes
     for field, value in changes.items():
         if field != "is_enabled":

@@ -146,6 +146,8 @@ function validateForm(values, requirePlannedDates) {
 export default function MaintenancePanel({ assetId, onChanged }) {
   const confirm = useConfirmation();
   const { user } = useAuth();
+  const isSupervisor = user?.role === "Supervisor";
+  const canAddMaintenance = user?.role === "Administrator";
   const canManageMaintenance = ["Administrator", "Supervisor"].includes(user?.role);
   const navigate = useNavigate();
   const [records, setRecords] = useState([]);
@@ -720,14 +722,20 @@ const openEdit = (record) => {
           </div>
           <div className="maintenance-heading-actions">
             <button
-              type="button"
-              className="btn-primary"
-              onClick={openCreate}
-              disabled={busy || !canManageMaintenance}
-              title={!canManageMaintenance ? "You do not have permission to create maintenance schedules." : undefined}
-            >
-              Add Maintenance
-            </button>
+            type="button"
+            className="btn-primary"
+            onClick={() => {
+              if (!canAddMaintenance) return;
+            }}
+            disabled={!canAddMaintenance || busy}
+            title={
+              !canAddMaintenance
+              ? "Only Administrators can add maintenance jobs."
+              : "Add Maintenance"
+              }
+              >
+                Add Maintenance
+                </button>
           </div>
         </div>
 
@@ -763,38 +771,38 @@ const openEdit = (record) => {
             <fieldset disabled={!canManageMaintenance} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
             <div className="maintenance-form-grid">
               <label className="field">Maintenance title <span className="req">*</span>
-                <input name="title" value={scheduleValues.title} onChange={updateScheduleValue} maxLength={200} required disabled={busy} />
+                <input name="title" value={scheduleValues.title} onChange={updateScheduleValue} maxLength={200} required disabled={busy || isSupervisor} />
               </label>
               <label className="field">Maintenance type
-                <select name="maintenance_type" value={scheduleValues.maintenance_type} onChange={updateScheduleValue} disabled={busy}>
+                <select name="maintenance_type" value={scheduleValues.maintenance_type} onChange={updateScheduleValue} disabled={busy || isSupervisor}>
                   {TYPES.map((item) => <option key={item} value={item}>{item[0].toUpperCase() + item.slice(1)}</option>)}
                 </select>
               </label>
               <label className="field">Priority
-                <select name="priority" value={scheduleValues.priority} onChange={updateScheduleValue} disabled={busy}>
+                <select name="priority" value={scheduleValues.priority} onChange={updateScheduleValue} disabled={busy || isSupervisor}>
                   {PRIORITIES.map((item) => <option key={item} value={item}>{item[0].toUpperCase() + item.slice(1)}</option>)}
                 </select>
               </label>
               <label className="field">Assigned technician
-                <input name="assigned_technician" value={scheduleValues.assigned_technician} onChange={updateScheduleValue} maxLength={200} disabled={busy} />
+                <input name="assigned_technician" value={scheduleValues.assigned_technician} onChange={updateScheduleValue} maxLength={200} disabled={busy || isSupervisor} />
               </label>
               <label className="field">Schedule start date <span className="req">*</span>
-                <input type="date" name="schedule_start_date" value={scheduleValues.schedule_start_date} onChange={updateScheduleValue} required disabled={busy} />
+                <input type="date" name="schedule_start_date" value={scheduleValues.schedule_start_date} onChange={updateScheduleValue} required disabled={busy || isSupervisor} />
                 <small className="muted">The date this maintenance plan becomes effective.</small>
               </label>
               <label className="field">First maintenance due date <span className="req">*</span>
-                <input type="date" name="first_due_date" value={scheduleValues.first_due_date} onChange={updateScheduleValue} required disabled={busy} />
+                <input type="date" name="first_due_date" value={scheduleValues.first_due_date} onChange={updateScheduleValue} required disabled={busy || isSupervisor} />
                 <small className="muted">The date by which the first maintenance occurrence must be completed.</small>
               </label>
               {dialog.kind === "schedule-edit" && (
                 <label className="field">Schedule status
-                  <select name="status" value={scheduleValues.status} onChange={updateScheduleValue} disabled={busy}>
+                  <select name="status" value={scheduleValues.status} onChange={updateScheduleValue} disabled={busy || isSupervisor}>
                     {["active", "paused", "cancelled", "completed"].map((item) => <option key={item} value={item}>{item.replaceAll("_", " ")}</option>)}
                   </select>
                 </label>
               )}
               <label className="field maintenance-checkbox">
-                <input type="checkbox" name="recurrence_enabled" checked={scheduleValues.recurrence_enabled} onChange={updateScheduleValue} disabled={busy} />
+                <input type="checkbox" name="recurrence_enabled" checked={scheduleValues.recurrence_enabled} onChange={updateScheduleValue} disabled={busy || isSupervisor} />
                 Enable recurring maintenance
               </label>
               {scheduleValues.recurrence_enabled && (
@@ -810,7 +818,7 @@ const openEdit = (record) => {
                 </>
               )}
               <label className="field maintenance-form-wide">Description / work details
-                <textarea name="description" value={scheduleValues.description} onChange={updateScheduleValue} rows={3} maxLength={10000} disabled={busy} />
+                <textarea name="description" value={scheduleValues.description} onChange={updateScheduleValue} rows={3} maxLength={10000} disabled={busy || isSupervisor} />
               </label>
             </div>
             </fieldset>
@@ -1118,23 +1126,22 @@ const openEdit = (record) => {
             <fieldset disabled={!canManageMaintenance} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
             <div className="maintenance-form-grid">
               <label className="field">Title <span className="req">*</span>
-                <input name="title" value={values.title} onChange={updateValue} required maxLength={200} disabled={busy} />
+                <input name="title" value={values.title} onChange={updateValue} required maxLength={200} disabled={busy || isSupervisor} />
               </label>
               <label className="field">Type <span className="req">*</span>
-                <select name="maintenance_type" value={values.maintenance_type} onChange={updateValue} required disabled={busy}>
+                <select name="maintenance_type" value={values.maintenance_type} onChange={updateValue} required disabled={busy || isSupervisor}>
                   {TYPES.map((item) => <option key={item} value={item}>{item[0].toUpperCase() + item.slice(1)}</option>)}
                 </select>
               </label>
               {dialog.kind === "create" && (
-            
-<label className="field">
+             <label className="field">
   Status <span className="req">*</span>
   <select
     name="status"
     value={values.status}
     onChange={updateValue}
     required
-    disabled={busy}
+    disabled={busy || isSupervisor}
   >
     {STATUSES.map((item) => (
       <option key={item} value={item}>
@@ -1145,21 +1152,19 @@ const openEdit = (record) => {
 </label>
               )}
               <label className="field">Priority <span className="req">*</span>
-                <select name="priority" value={values.priority} onChange={updateValue} required disabled={busy}>
-                  {PRIORITIES.map((item) => <option key={item} value={item}>{item[0].toUpperCase() + item.slice(1)}</option>)}
-                </select>
+                <select name="priority" value={values.priority} onChange={updateValue} required disabled={busy} />
               </label>
               <label className="field">Planned start {plannedDatesRequired && <span className="req">*</span>}
-                <input type="datetime-local" name="planned_start_at" value={values.planned_start_at} onChange={updateValue} required={plannedDatesRequired} disabled={busy} />
+                <input type="datetime-local" name="planned_start_at" value={values.planned_start_at} onChange={updateValue} required={plannedDatesRequired} disabled={busy || isSupervisor} />
               </label>
               <label className="field">Planned end {plannedDatesRequired && <span className="req">*</span>}
-                <input type="datetime-local" name="planned_end_at" value={values.planned_end_at} onChange={updateValue} required={plannedDatesRequired} disabled={busy} />
+                <input type="datetime-local" name="planned_end_at" value={values.planned_end_at} onChange={updateValue} required={plannedDatesRequired} disabled={busy || isSupervisor} />
               </label>
               <label className="field">Assigned technician
                 <input name="assigned_technician" value={values.assigned_technician} onChange={updateValue} maxLength={200} disabled={busy} />
               </label>
               <label className="field">Related alert ID
-                <input type="number" min="1" name="alert_id" value={values.alert_id} onChange={updateValue} disabled={busy} />
+                <input type="number" min="1" name="alert_id" value={values.alert_id} onChange={updateValue} disabled={busy || isSupervisor} />
               </label>
               <label className="field">Actual start
                 <input type="datetime-local" name="actual_started_at" value={values.actual_started_at} onChange={updateValue} disabled={busy} />

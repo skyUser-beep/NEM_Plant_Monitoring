@@ -29,6 +29,7 @@ import LoginPage from "../features/auth/LoginPage.jsx";
 import AdminUsersPage from "../features/auth/AdminUsersPage.jsx";
 import { useAuth } from "../features/auth/AuthContext.jsx";
 import { ConfirmationProvider } from "../components/common/UI.jsx";
+import ExportConfigurationPage from "../features/configuration/pages/ExportConfigurationPage.jsx";
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -126,6 +127,23 @@ export default function App() {
 <Route
   path="/assets/:id/monitoring-rules/new/:choiceId"
   element={<CreateMonitoringRulePage />}
+/>
+
+{/* Monitoring Rules */}
+<Route
+  path="/assets/:id/monitoring-rules/new/:choiceId"
+  element={<CreateMonitoringRulePage />}
+/>
+
+{/* Edit existing monitoring rule */}
+<Route
+  path="/assets/:id/monitoring-rules/:rule_type/edit"
+  element={<CreateMonitoringRulePage />}
+/>
+
+<Route
+  path="/configuration/export"
+  element={<ExportConfigurationPage />}
 />
 
 {/* Fallback — keep this last */}

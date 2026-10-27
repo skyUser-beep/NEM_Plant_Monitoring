@@ -218,26 +218,53 @@ const RULE_FIELDS = [
 
 export default function CreateMonitoringRulePage() {
   const { user } = useAuth();
-  const canManageRules = ["Administrator", "Supervisor"].includes(user?.role);
   const { id, choiceId, ruleId } = useParams();
   const assetId = Number(id);
 
   const navigate = useNavigate();
   const location = useLocation();
 
-  // Existing rule passed from the previous page.
   const editingRule = location.state?.editingRule ?? null;
 
   const isEdit = Boolean(ruleId || editingRule?.id);
   const activeRuleId = ruleId || editingRule?.id;
 
+  const isRestrictedRole = ["Supervisor", "Operator"].includes(user?.role);
+
+
+  const canManageRules = ["Administrator", "Supervisor"].includes(user?.role);
+
+  const canSubmitRule =
+  canManageRules ||
+  (isEdit && isRestrictedRole);
+
+  const isFieldDisabled = (field) => {
+    if (isRestrictedRole && isEdit) {
+      return field.key !== "threshold";
+    }
+    if (!canManageRules) return true;
+    return Boolean(field.disabled);
+  };
+
+
   const selection = useMemo(() => {
     try {
-      return monitoringRuleFormSelection(choiceId);
+      const existingRuleType =
+      location.state?.editingRule?.rule_type;
+      const selectedChoiceId = isEdit
+      ? (
+        existingRuleType === "boolean_count_threshold"
+        ? "motor_rotation"
+        : existingRuleType === "runtime_duration"
+        ? "running_time"
+        : existingRuleType
+      )
+      : choiceId;
+      return monitoringRuleFormSelection(selectedChoiceId);
     } catch {
       return null;
     }
-  }, [choiceId]);
+  }, [choiceId, isEdit, location.state]);
 
   const [assetName, setAssetName] = useState("");
   const [variables, setVariables] = useState([]);
@@ -500,7 +527,7 @@ export default function CreateMonitoringRulePage() {
 
   async function submit(event) {
     event.preventDefault();
-    if (!canManageRules) return;
+    if (!canSubmitRule) return;
 
     if (saving || !selection) return;
 
@@ -528,10 +555,18 @@ export default function CreateMonitoringRulePage() {
             "Unable to identify the rule to update."
           );
         }
-
+        const updatedRule = {
+          ...editingRule,
+          ...rule,
+          name: editingRule.name,
+          description: editingRule.description,
+          severity: editingRule.severity,
+          rule_type: editingRule.rule_type,
+          variable_id: editingRule.variable_id,
+        };
         await api.patch(
           `/rules/${activeRuleId}`,
-          rule
+          updatedRule
         );
       } else {
         await api.post(
@@ -670,74 +705,62 @@ export default function CreateMonitoringRulePage() {
                   {field.label}
                   {required ? " *" : ""}
                 </span>
-
                 {field.type === "textarea" ? (
                   <textarea
+                  value={values[field.key] ?? ""}
+                  required={required}
+                  placeholder={field.placeholder || ""}
+                  onChange={(event) =>
+                  updateValue(field.key, event.target.value)
+                }
+                rows={4}
+                disabled={isFieldDisabled(field)}
+                title={
+                  isFieldDisabled(field)
+                  ? "Only Threshold can be edited in Edit Rule mode."
+                  : undefined
+                }
+                />
+              ) : field.type === "select" ? (
+              <select
+              value={values[field.key] ?? field.default ?? ""}
+              required={required}
+              disabled={isFieldDisabled(field)}
+              title={
+                isFieldDisabled(field)
+                ? "Only Threshold can be edited in Edit Rule mode."
+                : undefined
+              }
+              onChange={(event) =>
+                updateValue(field.key, event.target.value)
+              }
+              >
+                <option value="">
+                  Select {field.label.toLowerCase()}
+                  </option>
+                  {(field.options || []).map(([value, label]) => (
+                    <option key={value} value={value}>
+                      {label}
+                      </option>
+                    ))}
+                    </select>
+                    ) : (
+                    <input
+                    type={field.type === "number" ? "number" : "text"}
                     value={values[field.key] ?? ""}
                     required={required}
                     placeholder={field.placeholder || ""}
+                    disabled={isFieldDisabled(field)}
+                    title={
+                      isFieldDisabled(field)
+                      ? "Only Threshold can be edited in Edit Rule mode."
+                      : undefined
+                    }
                     onChange={(event) =>
-                      updateValue(
-                        field.key,
-                        event.target.value
-                      )
+                      updateValue(field.key, event.target.value)
                     }
-                    rows={4}
-                    disabled={!canManageRules}
-                    title={!canManageRules ? "You do not have permission to edit monitoring rules." : undefined}
-                  />
-                ) : field.type === "select" ? (
-                  <select
-                    value={
-                      values[field.key] ??
-                      field.default ??
-                      ""
-                    }
-                    required={required}
-                    disabled={field.disabled || !canManageRules}
-                    title={!canManageRules ? "You do not have permission to edit monitoring rules." : undefined}
-                    onChange={(event) =>
-                      updateValue(
-                        field.key,
-                        event.target.value
-                      )
-                    }
-                  >
-                    <option value="">
-                      Select {field.label.toLowerCase()}
-                    </option>
-
-                    {(field.options || []).map(
-                      ([value, label]) => (
-                        <option
-                          key={value}
-                          value={value}
-                        >
-                          {label}
-                        </option>
-                      )
+                    />
                     )}
-                  </select>
-                ) : (
-                  <input
-                    type={
-                      field.type === "number"
-                        ? "number"
-                        : "text"
-                    }
-                    value={values[field.key] ?? ""}
-                    required={required}
-                    placeholder={field.placeholder || ""}
-                    disabled={!canManageRules}
-                    title={!canManageRules ? "You do not have permission to edit monitoring rules." : undefined}
-                    onChange={(event) =>
-                      updateValue(
-                        field.key,
-                        event.target.value
-                      )
-                    }
-                  />
-                )}
 
                 {field.key === "cycle_variable_id" &&
                   cycleVariableIds.length === 0 && (
@@ -777,8 +800,12 @@ export default function CreateMonitoringRulePage() {
           <button
             type="submit"
             className="btn-primary"
-            disabled={saving || variables.length === 0 || !canManageRules}
-            title={!canManageRules ? "You do not have permission to create or edit monitoring rules." : undefined}
+            disabled={saving || variables.length === 0 || !canSubmitRule}
+            title={
+              !canSubmitRule
+              ? "You do not have permission to create or edit monitoring rules."
+              : undefined
+            }
           >
             {saving
               ? isEdit

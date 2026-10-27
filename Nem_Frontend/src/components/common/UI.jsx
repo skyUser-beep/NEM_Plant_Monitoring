@@ -178,6 +178,7 @@ export function CreateModal({
       ])
     )
   );
+
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -186,12 +187,12 @@ export function CreateModal({
     (typeof conditions === "function"
       ? conditions(currentValues)
       : Array.isArray(conditions)
-        ? conditions.every(
-            (condition) => matchesConditions(condition, currentValues)
+        ? conditions.every((condition) =>
+            matchesConditions(condition, currentValues)
           )
         : conditions.anyOf
-          ? conditions.anyOf.some(
-              (condition) => matchesConditions(condition, currentValues)
+          ? conditions.anyOf.some((condition) =>
+              matchesConditions(condition, currentValues)
             )
           : currentValues[conditions.key] === conditions.equals);
 
@@ -207,6 +208,17 @@ export function CreateModal({
     typeof field.options === "function"
       ? field.options(currentValues)
       : field.options || [];
+
+  const handleChange = (event) => {
+    const { name, value } = event.target;
+    setValues((current) => ({ ...current, [name]: value }));
+    setError("");
+  };
+
+  const set = (key, value) => {
+    setValues((current) => ({ ...current, [key]: value }));
+    setError("");
+  };
 
   useEffect(() => {
     setValues((current) => {
@@ -244,11 +256,6 @@ export function CreateModal({
       return changed ? next : current;
     });
   }, [fields, initialValues]);
-
-  const set = (key, value) => {
-    setValues((current) => ({ ...current, [key]: value }));
-    setError("");
-  };
 
   const submit = async (event) => {
     event.preventDefault();
@@ -313,6 +320,7 @@ export function CreateModal({
       <form onSubmit={submit}>
         {intro && <p className="muted modal-intro">{intro}</p>}
 
+        
         {fields.filter(isVisible).map((field, index) => (
           <div className="field" key={field.key}>
             <label htmlFor={"f-" + field.key}>
@@ -327,7 +335,7 @@ export function CreateModal({
                   type="file"
                   multiple
                   accept={field.accept || ".pdf,.doc,.docx,.txt"}
-                  disabled={busy || disabled}
+                  disabled={Boolean(field.disabled || busy || disabled)}
                   onChange={(event) =>
                     set(field.key, Array.from(event.target.files || []))
                   }
@@ -350,7 +358,7 @@ export function CreateModal({
                 rows={3}
                 placeholder={field.placeholder}
                 value={values[field.key] ?? ""}
-                disabled={busy || disabled}
+                disabled={Boolean(field.disabled || busy || disabled)}
                 onChange={(event) => set(field.key, event.target.value)}
               />
             ) : field.type === "select" ? (
@@ -386,7 +394,7 @@ export function CreateModal({
                 step={field.type === "number" ? "any" : undefined}
                 autoFocus={index === 0}
                 required={isRequired(field)}
-                disabled={busy || disabled}
+                disabled={Boolean(field.disabled || busy || disabled)}
                 placeholder={field.placeholder}
                 value={values[field.key] ?? ""}
                 onChange={(event) => set(field.key, event.target.value)}
@@ -415,7 +423,11 @@ export function CreateModal({
             type="submit"
             className="btn-primary"
             disabled={busy || disabled}
-            title={disabled ? "You do not have permission to perform this action." : undefined}
+            title={
+              disabled
+                ? "You do not have permission to perform this action."
+                : undefined
+            }
           >
             {busy ? "Saving..." : submitLabel}
           </button>

@@ -53,10 +53,7 @@ def _authorize_operator_due_occurrence(
         or record.planned_due_date > utc_now().date()
         or (action == "complete" and record.status != "in_progress")
     ):
-        raise HTTPException(
-            status_code=403,
-            detail="Operators may only start or complete scheduled maintenance due today or overdue.",
-        )
+        raise HTTPException(status_code=403,detail="Operators may only start or complete scheduled maintenance due today or overdue.",)
     schedule = _schedule_or_404(session, record.schedule_id)
     if (
         schedule.current_occurrence_id != record.id
@@ -64,10 +61,7 @@ def _authorize_operator_due_occurrence(
         or schedule.status != "active"
         or schedule.approval_status == "pending"
     ):
-        raise HTTPException(
-            status_code=403,
-            detail="Operators may only start or complete the active maintenance occurrence due today or overdue.",
-        )
+        raise HTTPException(status_code=403,detail="Operators may only start or complete the active maintenance occurrence due today or overdue.",)
 
 # This prepares a db schedule for the frontend
 def _validate_instruction_documents(
@@ -76,10 +70,7 @@ def _validate_instruction_documents(
 ) -> list[int]:
     normalized_ids = list(dict.fromkeys(document_ids))
     if any(document_id <= 0 for document_id in normalized_ids):
-        raise HTTPException(
-            status_code=422,
-            detail="Instruction document IDs must be positive integers",
-        )
+        raise HTTPException(status_code=422,detail="Instruction document IDs must be positive integers",)
     if not normalized_ids:
         return []
     existing_ids = set(session.scalars(
@@ -89,10 +80,7 @@ def _validate_instruction_documents(
     ).all())
     missing_ids = [document_id for document_id in normalized_ids if document_id not in existing_ids]
     if missing_ids:
-        raise HTTPException(
-            status_code=422,
-            detail=f"Instruction documents were not found: {missing_ids}",
-        )
+        raise HTTPException(status_code=422,detail=f"Instruction documents were not found: {missing_ids}",)
     return normalized_ids
 
 
@@ -124,12 +112,8 @@ def _schedule_read(
             "name": file.original_name,
             "size_bytes": file.size_bytes,
             "content_type": file.content_type,
-            "view_url": (
-                f"/api/v1/documents/{file.document_id}/files/{file.id}/view"
-            ),
-            "download_url": (
-                f"/api/v1/documents/{file.document_id}/files/{file.id}/download"
-            ),
+            "view_url": (f"/api/v1/documents/{file.document_id}/files/{file.id}/view"),
+            "download_url": (f"/api/v1/documents/{file.document_id}/files/{file.id}/download"),
         })
     instruction_documents = [
         {
@@ -235,10 +219,7 @@ def _normalized(value: datetime | None) -> datetime | None:
 def _record_or_404(session: Session, record_id: int) -> MaintenanceRecord:
     record = session.get(MaintenanceRecord, record_id)
     if record is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Maintenance record {record_id} was not found",
-        )
+        raise HTTPException(status_code=404,detail=f"Maintenance record {record_id} was not found",)
     return record
 
 #validates an alert associated with a maintenance record
@@ -254,10 +235,7 @@ def _validate_alert(
     if alert is None:
         raise HTTPException(status_code=404, detail=f"Alert {alert_id} was not found")
     if alert.target_asset_id != asset_id:
-        raise HTTPException(
-            status_code=422,
-            detail="Alert does not belong to the selected asset",
-        )
+        raise HTTPException(status_code=422,detail="Alert does not belong to the selected asset",)
     return alert
 
 #Checks that the dates are logically ordered
@@ -304,10 +282,7 @@ def create_maintenance_record(
     session: Session = Depends(get_db),
 ) -> MaintenanceRecord:
     if session.get(Asset, payload.asset_id) is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Asset {payload.asset_id} was not found",
-        )
+        raise HTTPException(status_code=404,detail=f"Asset {payload.asset_id} was not found",)
     alert = _validate_alert(
         session,
         asset_id=payload.asset_id,
@@ -399,9 +374,7 @@ def create_maintenance_schedule(
         priority=payload.priority,
         assigned_technician=payload.assigned_technician,
         description=payload.description,
-        instruction_document_ids=_validate_instruction_documents(
-            session, payload.instruction_document_ids
-        ),
+        instruction_document_ids=_validate_instruction_documents(session, payload.instruction_document_ids),
         schedule_start_date=payload.schedule_start_date,
         current_period_start_date=payload.schedule_start_date,
         first_due_date=payload.first_due_date,
@@ -444,9 +417,7 @@ def list_maintenance_schedules(
         query = query.where(MaintenanceSchedule.asset_id == asset_id)
     schedules = session.scalars(query).all()
     today = utc_now().date()
-    results = [
-        _schedule_read(session, schedule, today=today) for schedule in schedules
-    ]
+    results = [_schedule_read(session, schedule, today=today) for schedule in schedules]
     if due_state is not None:
         results = [schedule for schedule in results if schedule.due_status == due_state]
     return results
@@ -505,10 +476,7 @@ def permanently_delete_maintenance_schedule(
         session.delete(record)
     session.flush()
     if alert_ids:
-        session.execute(delete(MonitoringEvent).where(
-                MonitoringEvent.alert_id.in_(alert_ids)
-            )
-        )
+        session.execute(delete(MonitoringEvent).where(MonitoringEvent.alert_id.in_(alert_ids)))
         session.execute(delete(Alert).where(Alert.id.in_(alert_ids)))
     session.delete(schedule)
     session.flush()
@@ -529,16 +497,24 @@ def permanently_delete_maintenance_schedule(
 
 # User can change selected fields without sending the entire schedule again.
 @router.patch("/schedules/{schedule_id}", response_model=MaintenanceScheduleRead)
-def update_maintenance_schedule(schedule_id: int,payload: MaintenanceScheduleUpdate,session: Session = Depends(get_db),) -> MaintenanceScheduleRead:
+def update_maintenance_schedule(schedule_id: int,payload: MaintenanceScheduleUpdate,session: Session = Depends(get_db), user: User = Depends(get_current_user),) -> MaintenanceScheduleRead:
     schedule = _schedule_or_404(session, schedule_id)
 
     changes = payload.model_dump(exclude_unset=True)
     if not changes:
         raise HTTPException(status_code=422,detail="Provide at least one field to update",)
+
+    # Role-based field restrictions for editing maintenance schedules
+    if user.role == "Operator":
+        raise HTTPException(status_code=403, detail="Operators are not allowed to edit maintenance schedules")
+    if user.role == "Supervisor":
+        allowed_supervisor_fields = {"recurrence_interval", "recurrence_unit"}
+        restricted = set(changes.keys()) - allowed_supervisor_fields
+        if restricted:
+            raise HTTPException(status_code=403,detail=f"Supervisors can only edit recurrence interval and unit. Restricted fields: {', '.join(sorted(restricted))}",)
+
     if "instruction_document_ids" in changes:
-        changes["instruction_document_ids"] = _validate_instruction_documents(
-            session, changes["instruction_document_ids"] or []
-        )
+        changes["instruction_document_ids"] = _validate_instruction_documents(session, changes["instruction_document_ids"] or [])
 
     previous_due_date = schedule.current_due_date
 
@@ -894,9 +870,7 @@ def permanently_delete_archived_maintenance_record(
     )
     if record is None:
         raise HTTPException(status_code=404,detail=f"Maintenance record {record_id} was not found",)
-    if record.schedule_id is not None and not (
-        record.status == "completed" and record.archived_at is not None
-    ):
+    if record.schedule_id is not None and not (record.status == "completed" and record.archived_at is not None):
         permanently_delete_maintenance_schedule(record.schedule_id, session)
         return None
     if record.status == "in_progress":
@@ -946,18 +920,40 @@ def update_maintenance_record(
     record_id: int,
     payload: MaintenanceUpdate,
     session: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ) -> MaintenanceRecord:
     record = _record_or_404(session, record_id)
     changes = payload.model_dump(exclude_unset=True)
     if not changes:
         raise HTTPException(status_code=422, detail="Provide at least one field to update")
+
+    # Role-based field restrictions for editing maintenance records
+    if user.role == "Operator":
+        raise HTTPException(status_code=403, detail="Operators are not allowed to edit maintenance records")
+    if user.role == "Supervisor":
+        # Supervisors can edit fields related to the maintenance execution details
+        allowed_supervisor_fields = {
+            "actual_started_at",
+            "actual_completed_at",
+            "notes",
+            "completion_notes",
+            "parts_used",
+            "checklist",
+            "next_due_at",
+            "priority",
+            "assigned_technician",
+        }
+        restricted = set(changes.keys()) - allowed_supervisor_fields
+        if restricted:
+            raise HTTPException(status_code=403,detail=f"Supervisors can only edit execution details. Restricted fields: {', '.join(sorted(restricted))}",)
+
     if record.status == "completed" or record.archived_at is not None:
         raise HTTPException(status_code=409,detail="Completed or archived maintenance cannot be edited",)
     if record.schedule_id is not None and {
         "planned_start_at",
         "planned_end_at",
     }.intersection(changes):
-        raise HTTPException( status_code=409,detail="Change the due date through the maintenance schedule",)
+        raise HTTPException(status_code=409,detail="Change the due date through the maintenance schedule",)
     if "alert_id" in changes:
         _validate_alert(
             session,
@@ -970,9 +966,7 @@ def update_maintenance_record(
                 record.summary = value
         else:
             setattr(record, field, value)
-    if record.status in {"planned", "in_progress"} and (
-        record.planned_start_at is None or record.planned_end_at is None
-    ):
+    if record.status in {"planned", "in_progress"} and (record.planned_start_at is None or record.planned_end_at is None):
         raise HTTPException(status_code=422,detail="planned_start_at and planned_end_at are required", )
     _validate_record_dates(record)
     session.commit()
@@ -991,10 +985,7 @@ def start_maintenance_record(
         session, record, user, action="start"
     )
     if record.status != "planned":
-        raise HTTPException(
-            status_code=409,
-            detail="Only planned maintenance can be started",
-        )
+        raise HTTPException(status_code=409,detail="Only planned maintenance can be started",)
     record.status = "in_progress"
     record.actual_started_at = record.actual_started_at or utc_now()
     _emit_maintenance_event(
@@ -1095,20 +1086,15 @@ def complete_maintenance_record(
             "completion_notes": record.completion_notes,
             "parts_used": record.parts_used,
             "checklist": record.checklist,
-            "planned_start_at": (
-                record.planned_start_at.isoformat() if record.planned_start_at else None
-            ),
-            "planned_end_at": (
-                record.planned_end_at.isoformat() if record.planned_end_at else None
-            ),
+            "planned_start_at": (record.planned_start_at.isoformat() if record.planned_start_at else None),
+            "planned_end_at": (record.planned_end_at.isoformat() if record.planned_end_at else None),
             "actual_started_at": actual_start.isoformat() if actual_start else None,
             "actual_completed_at": (
                 normalized_completed_at.isoformat()
                 if normalized_completed_at
                 else None
             ),
-            "actual_duration_seconds": max(
-                0,
+            "actual_duration_seconds": max(0,
                 int((normalized_completed_at - actual_start).total_seconds()),
             ),
             "schedule_id": record.schedule_id,

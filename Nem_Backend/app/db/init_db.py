@@ -93,6 +93,13 @@ def initialize_database(engine: Engine) -> None:
     _migrate_auth_roles(engine)
     inspector = inspect(engine)
     table_names = set(inspector.get_table_names())
+    if "auth_users" in table_names:
+        auth_columns = {column["name"] for column in inspector.get_columns("auth_users")}
+        with engine.begin() as connection:
+            if "contact_number" not in auth_columns:
+                connection.execute(text("ALTER TABLE auth_users ADD COLUMN contact_number VARCHAR(20)"))
+            if "email_address" not in auth_columns:
+                connection.execute(text("ALTER TABLE auth_users ADD COLUMN email_address VARCHAR(254)"))
     if "nem_monitoring_rule_templates" in table_names:
         template_columns = {
             column["name"]

@@ -1,4 +1,4 @@
-﻿
+
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import { Download, Trash2 } from "lucide-react";
@@ -43,6 +43,7 @@ import {
   ChevronDown,
   BookmarkIcon,
   FxIcon,
+  EditIcon,
 } from "../../../components/common/Icons.jsx";
 
 const ORDER = { alert: 0, warning: 1, ok: 2 };
@@ -211,6 +212,92 @@ function formatTimeUntilStart(milliseconds) {
   return `${days}d ${hours}h ${minutes}m ${seconds}s`;
 }
 
+const isBlank = (value) =>
+  value === undefined || value === null || String(value).trim() === "";
+
+const sameNumber = (a, b) =>
+  !isBlank(a) && !isBlank(b) && Number(a) === Number(b);
+
+// Builds the rule-specific threshold/interval part of a PATCH payload from
+// the edit form. Only values the user actually changed are included.
+function buildRuleThresholdChanges(ruleType, values, initial) {
+  const changes = {};
+
+  if (ruleType === "runtime_duration") {
+    const keys = [
+      "runtime_warning_hours",
+      "runtime_warning_2_hours",
+      "runtime_alert_hours",
+    ];
+    if (!keys.every((key) => sameNumber(values[key], initial[key]))) {
+      const [warning1, warning2, alert] = keys.map((key) => Number(values[key]));
+      if (
+        keys.some((key) => isBlank(values[key])) ||
+        ![warning1, warning2, alert].every(
+          (value) => Number.isFinite(value) && value > 0
+        ) ||
+        warning1 >= warning2 ||
+        warning2 >= alert
+      ) {
+        throw new Error(
+          "Running-time thresholds must be positive and strictly increasing."
+        );
+      }
+      changes.parameters = {
+        warning_thresholds_seconds: [
+          Math.round(warning1 * 3600),
+          Math.round(warning2 * 3600),
+        ],
+        alert_threshold_seconds: Math.round(alert * 3600),
+      };
+    }
+  } else if (ruleType === "boolean_count_threshold") {
+    const keys = ["warning_threshold_1", "warning_threshold_2", "alert_threshold"];
+    if (!keys.every((key) => sameNumber(values[key], initial[key]))) {
+      const [warning1, warning2, alert] = keys.map((key) => Number(values[key]));
+      if (
+        keys.some((key) => isBlank(values[key])) ||
+        ![warning1, warning2, alert].every(
+          (value) => Number.isSafeInteger(value) && value > 0
+        ) ||
+        warning1 >= warning2 ||
+        warning2 >= alert
+      ) {
+        throw new Error(
+          "Cycle thresholds must be positive whole numbers in increasing order."
+        );
+      }
+      changes.parameters = {
+        warning_thresholds: [warning1, warning2],
+        alert_threshold: alert,
+      };
+    }
+  } else if (
+    ruleType === "parameter_threshold" &&
+    !sameNumber(values.threshold, initial.threshold) &&
+    !isBlank(values.threshold)
+  ) {
+    const threshold = Number(values.threshold);
+    if (!Number.isFinite(threshold)) {
+      throw new Error("Enter a valid numeric threshold.");
+    }
+    changes.threshold = threshold;
+  }
+
+  if (
+    !isBlank(values.evaluation_interval_seconds) &&
+    !sameNumber(values.evaluation_interval_seconds, initial.evaluation_interval_seconds)
+  ) {
+    const interval = Number(values.evaluation_interval_seconds);
+    if (!Number.isInteger(interval) || interval < 1) {
+      throw new Error("Evaluation interval must be a whole number of seconds (1 or more).");
+    }
+    changes.evaluation_interval_seconds = interval;
+  }
+
+  return changes;
+}
+
 const ruleFields = (
   variables,
   cycleVariableIds,
@@ -375,6 +462,12 @@ const ruleFields = (
       ["alert", "Alert"],
     ],
   },
+  {
+    key: "evaluation_interval_seconds",
+    label: "Evaluation interval (seconds)",
+    type: "number",
+    placeholder: "Leave blank to keep the current interval",
+  },
 ];
 
 const LOG_FIELDS = [
@@ -469,7 +562,8 @@ export default function AssetDetail() {
   const confirm = useConfirmation();
   const { user } = useAuth();
   const isAdministrator = user?.role === "Administrator";
-  const canManageRules = isAdministrator || user?.role === "Supervisor";
+  const isSupervisor = user?.role === "Supervisor";
+  const canManageRules = isAdministrator || isSupervisor;
   const canManageLogbook = canManageRules;
   const { id } = useParams();
   const location = useLocation();
@@ -1247,12 +1341,43 @@ const filteredEvents = [...events]
 
   const addRule = async (values) => {
     if (!canManageRules) return;
-    const rule = buildAssetMonitoringRule(values, assetId, {
-      variables: availableVariables,
-      cycleVariableIds,
-      runtimeVariableIds,
-    });
-    await api.post(`/assets/${assetId}/rules`, rule);
+
+    const editId = monitoringRuleSelection?.ruleId;
+    if (editId && isSupervisor) {
+      // Supervisors may only change thresholds and intervals; send just those.
+      const payload = buildRuleThresholdChanges(
+        monitoringRuleSelection?.initialValues?.rule_type,
+        values,
+        monitoringRuleSelection?.initialValues || {}
+      );
+      if (Object.keys(payload).length === 0) {
+        setModal(null);
+        setMonitoringRuleSelection(null);
+        setActionNotice("No changes were made to the rule.");
+        return;
+      }
+      await api.patch(`/rules/${editId}`, payload);
+    } else {
+      const rule = buildAssetMonitoringRule(values, assetId, {
+        variables: availableVariables,
+        cycleVariableIds,
+        runtimeVariableIds,
+      });
+
+      if (editId) {
+        // Editing must not change activation state or the stale timeout.
+        delete rule.is_enabled;
+        delete rule.stale_after_seconds;
+        if (!isBlank(values.evaluation_interval_seconds)) {
+          rule.evaluation_interval_seconds = Number(
+            values.evaluation_interval_seconds
+          );
+        }
+        await api.patch(`/rules/${editId}`, rule);
+      } else {
+        await api.post(`/assets/${assetId}/rules`, rule);
+      }
+    }
 
     setModal(null);
     setMonitoringRuleSelection(null);
@@ -1261,27 +1386,113 @@ const filteredEvents = [...events]
   };
 
   const openMonitoringRuleForm = (choiceId) => {
-  setModal(null);
-  setMonitoringRuleSelection(null);
+    setModal(null);
+    setMonitoringRuleSelection(null);
 
-  navigate(`/assets/${assetId}/monitoring-rules/new/${choiceId}`);
-};
+    navigate(`/assets/${assetId}/monitoring-rules/new/${choiceId}`);
+  };
+
+  const openEditRuleForm = (rule) => {
+    if (!canManageRules) return;
+
+    const parameters = rule.parameters || {};
+    const initialValues = {
+      name: rule.name || "",
+      description: rule.description || "",
+      rule_type: rule.rule_type || "parameter_threshold",
+      severity: rule.severity || "warning",
+      evaluation_interval_seconds:
+        rule.evaluation_interval_seconds ?? null,
+    };
+
+    if (rule.rule_type === "parameter_threshold") {
+      initialValues.variable_id = rule.variable_id;
+      initialValues.operator = rule.operator || ">=";
+      initialValues.threshold = rule.threshold;
+    } else if (rule.rule_type === "boolean_count_threshold") {
+      initialValues.cycle_variable_id = rule.variable_id;
+      const countWarnings = parameters.warning_thresholds;
+      initialValues.warning_threshold_1 = Array.isArray(countWarnings)
+        ? countWarnings[0] ?? null
+        : null;
+      initialValues.warning_threshold_2 = Array.isArray(countWarnings)
+        ? countWarnings[1] ?? null
+        : null;
+      initialValues.alert_threshold = parameters.alert_threshold ?? null;
+    } else if (rule.rule_type === "runtime_duration") {
+      initialValues.runtime_variable_id = rule.variable_id;
+      const warnings = parameters.warning_thresholds_seconds;
+      const alert = parameters.alert_threshold_seconds;
+      initialValues.runtime_warning_hours =
+        Array.isArray(warnings) && warnings.length >= 1
+          ? warnings[0] / 3600
+          : null;
+      initialValues.runtime_warning_2_hours =
+        Array.isArray(warnings) && warnings.length >= 2
+          ? warnings[1] / 3600
+          : null;
+      initialValues.runtime_alert_hours =
+        alert != null ? alert / 3600 : null;
+    }
+
+    setMonitoringRuleSelection({
+      title: "Edit rule",
+      initialValues,
+      ruleId: rule.id,
+    });
+    setModal("add");
+  };
 
   const monitoringRuleFormFields = useMemo(
-    () =>
-      ruleFormFields.map((field) =>
-        field.key === "rule_type" && monitoringRuleSelection
-          ? {
-              ...field,
-              disabled: true,
-              options: field.options.filter(
-                ([ruleType]) =>
-                  ruleType === monitoringRuleSelection.ruleType
-              ),
-            }
-          : field
-      ),
-    [ruleFormFields, monitoringRuleSelection]
+    () => {
+      const isEditing = Boolean(monitoringRuleSelection?.ruleId);
+      const editingRuleType =
+        monitoringRuleSelection?.initialValues?.rule_type;
+
+      return ruleFormFields
+        .filter(
+          (field) =>
+            field.key !== "evaluation_interval_seconds" || isEditing
+        )
+        .map((field) => {
+        let disabled = false;
+        let options = field.options;
+
+        if (field.key === "rule_type") {
+          if (isEditing) {
+            disabled = true;
+          }
+          if (options && editingRuleType) {
+            options = field.options.filter(
+              ([ruleType]) => ruleType === editingRuleType
+            );
+          }
+        }
+
+        if (isSupervisor && isEditing) {
+          const allowedFields = [
+            "threshold",
+            "evaluation_interval_seconds",
+            "warning_threshold_1",
+            "warning_threshold_2",
+            "alert_threshold",
+            "runtime_warning_hours",
+            "runtime_warning_2_hours",
+            "runtime_alert_hours",
+          ];
+          if (!allowedFields.includes(field.key)) {
+            disabled = true;
+          }
+        }
+
+        return {
+          ...field,
+          disabled,
+          options,
+        };
+      });
+    },
+    [ruleFormFields, monitoringRuleSelection, isSupervisor]
   );
 
   const bulk = async (state) => {
@@ -1575,9 +1786,18 @@ const filteredEvents = [...events]
           </button>
 
           <button
+            type="button"
             className="link-btn"
-            onClick={() => setModal("variables")}
-            title="View configured variables; only Administrators can change them."
+            disabled={isSupervisor}
+            title={
+              isSupervisor
+                ? "Supervisors cannot manage variables."
+                : "View configured variables; only Administrators can change them."
+            }
+            onClick={() => {
+              if (isSupervisor) return;
+              setModal("variables");
+            }}
           >
             <AssetIcon size={17} /> Variables
           </button>
@@ -1725,13 +1945,23 @@ const filteredEvents = [...events]
               )}
             </div>
             <button
-            className="btn-primary"
-            onClick={() => setModal("addRuleOptions")}
-            disabled={!canManageRules}
-            title={!canManageRules ? "You do not have permission to manage monitoring rules." : undefined}
+              type="button"
+              className="btn-primary"
+              disabled={isSupervisor || !canManageRules}
+              title={
+                isSupervisor
+                  ? "Supervisors cannot add monitoring rules."
+                  : !canManageRules
+                    ? "You do not have permission to manage monitoring rules."
+                    : "Add rule"
+              }
+              onClick={() => {
+                if (isSupervisor || !canManageRules) return;
+                setModal("addRuleOptions");
+              }}
             >
               <PlusCircle size={17} /> Add Rule
-              </button>
+            </button>
 
             <div className="dropdown" data-menu-open={menu}>
               <button
@@ -2016,6 +2246,18 @@ const filteredEvents = [...events]
                               }}
                             >
                               View rule
+                            </button>
+                            <button
+                            type="button"
+                            role="menuitem"
+                            onClick={() => {
+                              setRuleActionMenuId(null);
+                              openEditRuleForm(rule);
+                            }}
+                            disabled={!canManageRules}
+                            title={!canManageRules ? "You do not have permission to manage monitoring rules." : undefined}
+                            >
+                            Edit rule
                             </button>
                             {lifecycleStatus(rule) === "in_progress" && (
                               <button
@@ -3017,7 +3259,9 @@ const filteredEvents = [...events]
       {modal === "add" && (
         <CreateModal
           title={monitoringRuleSelection?.title || "Create monitoring rule"}
-          submitLabel="Create rule"
+          submitLabel={
+            monitoringRuleSelection?.ruleId ? "Save rule" : "Create rule"
+          }
           intro={
             !canManageRules
               ? "You do not have permission to create or edit monitoring rules."

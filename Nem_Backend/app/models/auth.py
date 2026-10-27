@@ -1,5 +1,6 @@
 """Local users and revocable login sessions."""
 from datetime import datetime, timezone
+from typing import Optional
 from sqlalchemy import Boolean, CheckConstraint, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.db.base import Base
@@ -16,6 +17,8 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(256), nullable=False)
     role: Mapped[str] = mapped_column(String(32), nullable=False, default="Supervisor", index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    contact_number: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    email_address: Mapped[Optional[str]] = mapped_column(String(254), nullable=True)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), nullable=False, default=lambda: datetime.now(timezone.utc))
     sessions: Mapped[list["AuthSession"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 

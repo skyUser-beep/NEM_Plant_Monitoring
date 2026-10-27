@@ -8,6 +8,8 @@ from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+import re
+
 from app.db.session import get_db
 from app.models import AuthSession, User
 from app.services.auth_security import (
@@ -35,11 +37,64 @@ class LoginResponse(BaseModel):
     expires_at: datetime
     user: dict
 
+_INDIAN_PHONE_REGEX = re.compile(r"^(\+91|91|0)?[6-9]\d{9}$")
+_EMAIL_REGEX = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+
+
+def _normalize_phone(value: str) -> str:
+    digits = re.sub(r"\D", "", value)
+    if digits.startswith("91") and len(digits) == 12:
+        return digits[2:]
+    if digits.startswith("0") and len(digits) == 11:
+        return digits[1:]
+    return digits
+
+
+def _validate_phone(value: str | None) -> str | None:
+    if value is None:
+        return None
+    trimmed = value.strip()
+    if not trimmed:
+        return None
+    if not _INDIAN_PHONE_REGEX.match(trimmed):
+        raise ValueError(
+            "Invalid phone number. Enter a valid 10-digit Indian mobile number "
+            "(optionally prefixed with +91)."
+        )
+    return _normalize_phone(trimmed)
+
+
+def _validate_email(value: str | None) -> str | None:
+    if value is None:
+        return None
+    trimmed = value.strip()
+    if not trimmed:
+        return None
+    if not _EMAIL_REGEX.match(trimmed):
+        raise ValueError(
+            "Invalid email address. Use a valid format such as name@domain.com."
+        )
+    return trimmed
+
+
 #This model controls account creation
 class UserCreate(BaseModel):
     username: str = Field(min_length=1, max_length=120)
     password: str = Field(min_length=12, max_length=1024)
     role: Literal["Administrator", "Supervisor", "Operator"] = "Supervisor"
+    contact_number: str | None = Field(default=None, max_length=20)
+    email_address: str | None = Field(default=None, max_length=254)
+
+    @field_validator("contact_number")
+    @classmethod
+    def validate_contact_number(cls, value: str | None) -> str | None:
+        return _validate_phone(value)
+
+    @field_validator("email_address")
+    @classmethod
+    def validate_email_address(cls, value: str | None) -> str | None:
+        return _validate_email(value)
+
 #Username normalization to case-insensitive form.
     @field_validator("username")
     @classmethod
@@ -48,11 +103,23 @@ class UserCreate(BaseModel):
         if not value:
             raise ValueError("Username cannot be empty")
         return value
-#This model allow administrator to change a user`s role,active status or password`
+#This model allow administrator to change a user`s role,active status, contact details or password`
 class UserUpdate(BaseModel):
     role: Literal["Administrator", "Supervisor", "Operator"] | None = None
     is_active: bool | None = None
+    contact_number: str | None = Field(default=None, max_length=20)
+    email_address: str | None = Field(default=None, max_length=254)
     password: str | None = Field(default=None, min_length=12, max_length=1024)
+
+    @field_validator("contact_number")
+    @classmethod
+    def validate_contact_number(cls, value: str | None) -> str | None:
+        return _validate_phone(value)
+
+    @field_validator("email_address")
+    @classmethod
+    def validate_email_address(cls, value: str | None) -> str | None:
+        return _validate_email(value)
 
 
 #DB Session dependency -> shortcut for asking FASTAPI to provide SQLAlchemy db session
@@ -65,6 +132,8 @@ def _user_read(user: User) -> dict:
         "username": user.username,
         "role": user.role,
         "is_active": user.is_active,
+        "contact_number": user.contact_number,
+        "email_address": user.email_address,
     }
 
 #Identifying the loggin-in user  
@@ -142,6 +211,8 @@ def create_user(payload: UserCreate, db: Db) -> dict:
         username=payload.username,
         password_hash=hash_password(payload.password),
         role=payload.role,
+        contact_number=payload.contact_number,
+        email_address=payload.email_address,
         is_active=True,
     )
     db.add(user)
@@ -184,3 +255,19 @@ def update_user(user_id: int, payload: UserUpdate, db: Db) -> dict:
     db.commit()
     db.refresh(user)
     return _user_read(user)
+
+#Deleting a user account -> removes the user and all their sessions so they can no longer log in
+@router.delete("/users/{user_id}", status_code=204, dependencies=[Depends(require_roles("Administrator"))])
+def delete_user(user_id: int, db: Db) -> None:
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User was not found")
+    if user.role == "Administrator":
+        active_admin_count = db.scalar(
+            select(User.id).where(User.role == "Administrator", User.is_active.is_(True), User.id != user_id).limit(1)
+        )
+        if active_admin_count is None:
+            raise HTTPException(status_code=409, detail="The last administrator cannot be deleted")
+    db.execute(delete(AuthSession).where(AuthSession.user_id == user_id))
+    db.delete(user)
+    db.commit()

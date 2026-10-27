@@ -1,8 +1,10 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../../../services/api.js";
 import { useAuth } from "../../auth/AuthContext.jsx";
 import { EmptyState, Modal } from "../../../components/common/UI.jsx";
 import { formatTime } from "../../../utils/format.js";
+import { DotsIcon, EditIcon } from "../../../components/common/Icons.jsx";
 import "./MaintenancePanel.css";
 
 function todayDateInput() {
@@ -25,6 +27,7 @@ export default function CurrentMaintenanceCards({
   showCompleted = false,
 }) {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const canManageMaintenance = ["Administrator", "Supervisor"].includes(user?.role);
   const canOperateDueMaintenance = user?.role === "Operator";
   const [records, setRecords] = useState([]);
@@ -34,6 +37,16 @@ export default function CurrentMaintenanceCards({
   const [completingRecordId, setCompletingRecordId] = useState(null);
   const [error, setError] = useState("");
   const [selectedRecord, setSelectedRecord] = useState(null);
+  const [editingRecordId, setEditingRecordId] = useState(null);
+  const busy = startingRecordId !== null || completingRecordId !== null;
+
+  const openEdit = (record) => {
+    if (!canManageMaintenance) return;
+    setEditingRecordId(record.id);
+    navigate(`/assets/${assetId}/maintenance/schedules/${record.schedule_id || record.id}/edit`, {
+      state: { maintenanceRecord: record },
+    });
+  };
 
   const loadCurrentMaintenance = useCallback(async () => {
     setError("");
@@ -183,13 +196,28 @@ export default function CurrentMaintenanceCards({
               </div>
               <div className="rule-card-actions current-maintenance-actions">
                 {inProgress || completed ? (
-                  <button
-                    type="button"
-                    className="btn-outline"
-                    onClick={() => setSelectedRecord(record)}
-                  >
-                    Open maintenance
-                  </button>
+                  <>
+                    <button
+                      type="button"
+                      className="btn-outline"
+                      onClick={() => setSelectedRecord(record)}
+                    >
+                      Open maintenance
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-outline"
+                      onClick={() => openEdit(record)}
+                      disabled={busy || !canManageMaintenance}
+                      title={
+                        !canManageMaintenance
+                          ? "You do not have permission to edit maintenance records."
+                          : undefined
+                      }
+                    >
+                      <EditIcon size={13} /> Edit
+                    </button>
+                  </>
                 ) : (
                   <button
                     type="button"
@@ -360,6 +388,19 @@ export default function CurrentMaintenanceCards({
                   : "Complete maintenance"}
               </button>
             )}
+            <button
+              type="button"
+              className="btn-outline"
+              onClick={() => openEdit(selectedRecord)}
+              disabled={busy || !canManageMaintenance}
+              title={
+                !canManageMaintenance
+                  ? "You do not have permission to edit maintenance records."
+                  : undefined
+              }
+            >
+              <EditIcon size={13} /> Edit
+            </button>
             <button
               type="button"
               className="btn-outline"

@@ -270,6 +270,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             or policy_path.startswith("/api/v1/usage")
             or policy_path == "/api/v1/monitoring/evaluate"
             or policy_path.startswith("/api/v1/readings") and not safe_method
+            or policy_path.startswith("/api/v1/auth/users/")
+            and method == "DELETE"
         )
         if (
             role != "Administrator"
