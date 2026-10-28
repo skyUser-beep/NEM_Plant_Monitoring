@@ -1,4 +1,5 @@
-"""Administrator-managed asset supervisor assignments and notification status."""
+# Administrator-managed asset supervisor assignments and notification status
+#Handles three main functions: assigning supervisors to assets, sending a test email,summarizing email notification statuses
 import logging
 from typing import Annotated
 
@@ -21,11 +22,11 @@ router = APIRouter(tags=["notifications"], dependencies=[Depends(require_roles("
 Db = Annotated[Session, Depends(get_db)]
 LOGGER = logging.getLogger("nem_backend.notifications")
 
-
+#Accepts list of supervisor used IDs,with a maximum of 50 entries
 class SupervisorAssignment(BaseModel):
     user_ids: list[int] = Field(default_factory=list, max_length=50)
 
-
+#Validates the recipient`s email address before sending a test`
 class TestEmailRequest(BaseModel):
     recipient: str = Field(min_length=1, max_length=254)
 
@@ -37,7 +38,7 @@ class TestEmailRequest(BaseModel):
             raise ValueError("Enter a valid test recipient email address")
         return value
 
-
+#Calls the SMTP service and returns an appropriate success or error response
 @router.post("/notifications/email/test")
 def send_email_test(payload: TestEmailRequest, request: Request, session: Db) -> dict[str, str]:
     try:
@@ -59,7 +60,7 @@ def send_email_test(payload: TestEmailRequest, request: Request, session: Db) ->
         ),
     }
 
-
+#Retrives supervisors currently assigned to an asset
 def _assignment(session: Session, asset_id: int) -> dict:
     users = session.scalars(
         select(User).join(AssetSupervisor, AssetSupervisor.user_id == User.id)
@@ -72,14 +73,14 @@ def _assignment(session: Session, asset_id: int) -> dict:
         ],
     }
 
-
+# Returns an asset`s supervisor assignments.
 @router.get("/assets/{asset_id}/supervisors")
 def get_asset_supervisors(asset_id: int, session: Db) -> dict:
     if session.get(Asset, asset_id) is None:
         raise HTTPException(status_code=404, detail=f"Asset {asset_id} was not found")
     return _assignment(session, asset_id)
 
-
+# Replaces an asset`s supervisor assignments after validating the selected users.
 @router.put("/assets/{asset_id}/supervisors")
 def set_asset_supervisors(asset_id: int, payload: SupervisorAssignment, session: Db) -> dict:
     if session.get(Asset, asset_id) is None:
@@ -97,7 +98,7 @@ def set_asset_supervisors(asset_id: int, payload: SupervisorAssignment, session:
     session.commit()
     return _assignment(session, asset_id)
 
-
+#Counts notifications by status and returns up to five recent errors
 @router.get("/notifications/email/summary")
 def email_notification_summary(session: Db) -> dict:
     rows = session.execute(

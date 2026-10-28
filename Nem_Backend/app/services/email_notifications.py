@@ -1,19 +1,19 @@
 #Email notifications for warnings and alerts, delivered from a persistent outbox.
 
 #Alert creation only enqueues rows (same transaction, never raises). A background
-#loop delivers them using the SMTP settings saved by an Administrator, so SMTP
-#failures can never block or lose an alert.
+# loop delivers them using the SMTP settings saved by an Administrator, so SMTP
+# failures can never block or lose an alert.
 import logging
 import re
 import smtplib
 import ssl
 from datetime import datetime, timedelta, timezone
-from email.message import EmailMessage
-from email.utils import formataddr
+from email.message import EmailMessage # Constructs email messages
+from email.utils import formataddr #formats the sender name and address
 from typing import Any
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo #Displays event times in a configured timezone
 
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.fernet import Fernet, InvalidToken #Decrypts saved SMTP password
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -38,10 +38,9 @@ _RETRY_MAX_SECONDS = 3600
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
-
+#Find supervisors and assets locations
 def valid_email(value: str | None) -> bool:
     return bool(value) and len(value) <= 254 and bool(_EMAIL_REGEX.match(value.strip()))
-
 
 def supervisors_for_asset(session: Session, asset: Asset) -> list[User]:
     #Active Supervisors assigned to the asset or, failing that, its nearest assigned ancestor.
@@ -78,7 +77,8 @@ def _location(session: Session, asset: Asset) -> str:
         parent_id = parent.parent_asset_id
     return " > ".join(reversed(names))
 
-
+#Creating emails jobs
+#public entry point used when an alert needs an email notification 
 def enqueue_alert_notifications(
     session: Session,
     alert: Alert,
@@ -94,16 +94,16 @@ def enqueue_alert_notifications(
         LOGGER.exception("Could not queue email notification for alert %s", alert.id)
         return 0
 
-
+#Perfroms the actual preparation of email jobs
 def _enqueue(session: Session, alert: Alert, asset: Asset, rule: MonitoringRule | None, settings: Settings | None) -> int:
+    #check whether notifications are enabled 
     if settings is not None and not settings.email_notifications_enabled:
         return 0
     if alert.id is None:
         session.flush()
     supervisors = supervisors_for_asset(session, asset)
     if not supervisors:
-        LOGGER.warning(
-            "No supervisor assigned to asset %s (%s); %s email for alert %s not sent",
+        LOGGER.warning("No supervisor assigned to asset %s (%s); %s email for alert %s not sent",
             asset.id, asset.name, alert.severity, alert.id,
         )
         return 0
@@ -154,22 +154,21 @@ def _enqueue(session: Session, alert: Alert, asset: Asset, rule: MonitoringRule 
     session.flush()
     return queued
 
-
+#Custom exceptions classes for SMTP errors 
+#reports a problem with the saved SMTP configuration (host, port, sender, username, password)
 class SmtpConfigError(RuntimeError):
     pass
-
-
+#Intented to represent an SMTP TLS-relared failure 
 class SmtpTlsError(RuntimeError):
     pass
-
-
+#Identifies excatly which stage of SMTP communication failed
 class SmtpStageError(RuntimeError):
     def __init__(self, stage: str, diagnostic: str):
         self.stage = stage
         self.diagnostic = diagnostic
         super().__init__(f"SMTP {stage} failed: {diagnostic}")
 
-
+#this function reads the saved email configuration from the FrontendConfig db record whose key is email.
 def _load_smtp_config(session: Session, settings: Settings) -> dict[str, Any]:
     record = session.get(FrontendConfig, "email")
     value = dict(record.value) if record is not None else {}
@@ -199,7 +198,7 @@ def _load_smtp_config(session: Session, settings: Settings) -> dict[str, Any]:
             raise SmtpConfigError("Stored SMTP password could not be decrypted") from None
     return {"host": host, "port": port, "username": username, "password": password, "from_address": from_address}
 
-
+#This converts the event timestamp into the configured display timezone
 def _format_time(iso_value: str, settings: Settings) -> str:
     moment = datetime.fromisoformat(iso_value)
     try:
@@ -213,7 +212,7 @@ def _format_time(iso_value: str, settings: Settings) -> str:
 def _clean(value: Any) -> str:
     return re.sub(r"[\r\n]+", " ", str(value))
 
-
+#This function builds the actual warning or alert email
 def build_message(payload: dict[str, Any], *, sender: str, recipient: str, settings: Settings) -> EmailMessage:
     kind = "Alert" if payload["severity"] == "alert" else "Warning"
     asset_name = _clean(payload["asset_name"])
@@ -239,7 +238,7 @@ def build_message(payload: dict[str, Any], *, sender: str, recipient: str, setti
     message.set_content(text + "\n\nThis message was generated automatically. Do not reply.\n")
     return message
 
-
+#custom SMTP authentication layer 
 def _login(client: smtplib.SMTP, username: str, password: str) -> None:
     # smtplib.login() discards an auth rejection when a later mechanism hits a
     # dropped connection; keep the first rejection so the real reason is reported.
@@ -265,17 +264,14 @@ def _login(client: smtplib.SMTP, username: str, password: str) -> None:
             raise
     raise first_rejection
 
-
+#Core SMTP delivery function 
 def _send(config: dict[str, Any], message: EmailMessage, timeout: int) -> None:
+    #TLS certiticate verificaiotn remains enabled through this context
     context = ssl.create_default_context()
     if config["port"] == 465:
-        client: smtplib.SMTP = smtplib.SMTP_SSL(
-            timeout=timeout,
-            context=context,
-        )
+        client: smtplib.SMTP = smtplib.SMTP_SSL(timeout=timeout,context=context,)
     else:
         client = smtplib.SMTP(timeout=timeout)
-
     try:
         client._host = config["host"]
         try:
@@ -300,34 +296,19 @@ def _send(config: dict[str, Any], message: EmailMessage, timeout: int) -> None:
 
         if config["port"] != 465:
             if not client.has_extn("starttls"):
-                raise SmtpStageError(
-                    "STARTTLS capability",
-                    "SMTP server does not advertise STARTTLS",
-                )
+                raise SmtpStageError("STARTTLS capability","SMTP server does not advertise STARTTLS",)
             try:
                 code, _ = client.starttls(context=context)
             except Exception as error:
-                raise SmtpStageError(
-                    "STARTTLS negotiation",
-                    describe_smtp_error(error),
-                ) from None
+                raise SmtpStageError("STARTTLS negotiation",describe_smtp_error(error),) from None
             if code != 220:
-                raise SmtpStageError(
-                    "STARTTLS negotiation",
-                    f"SMTP server returned response {code}",
-                )
+                raise SmtpStageError("STARTTLS negotiation",f"SMTP server returned response {code}",)
             try:
                 code, _ = client.ehlo()
             except Exception as error:
-                raise SmtpStageError(
-                    "post-STARTTLS EHLO",
-                    describe_smtp_error(error),
-                ) from None
+                raise SmtpStageError("post-STARTTLS EHLO",describe_smtp_error(error),) from None
             if code != 250:
-                raise SmtpStageError(
-                    "post-STARTTLS EHLO",
-                    f"SMTP server returned response {code}",
-                )
+                raise SmtpStageError("post-STARTTLS EHLO",f"SMTP server returned response {code}",)
 
         if config["username"] and config["password"]:
             try:
@@ -352,19 +333,13 @@ def _send(config: dict[str, Any], message: EmailMessage, timeout: int) -> None:
         try:
             code, _ = client.data(message.as_bytes())
         except Exception as error:
-            raise SmtpStageError(
-                "message DATA transmission",
-                describe_smtp_error(error),
-            ) from None
+            raise SmtpStageError("message DATA transmission",describe_smtp_error(error),) from None
         if code != 250:
-            raise SmtpStageError(
-                "message DATA acceptance",
-                f"SMTP server returned response {code}",
-            )
+            raise SmtpStageError("message DATA acceptance",f"SMTP server returned response {code}",)
     finally:
         client.close()
 
-
+#This converts exceptions into safre diagnostic messages 
 def describe_smtp_error(error: Exception) -> str:
     if isinstance(error, SmtpStageError):
         return str(error)
@@ -395,7 +370,7 @@ def describe_smtp_error(error: Exception) -> str:
         return f"SMTP delivery error ({type(error).__name__})"
     return f"Unexpected error ({type(error).__name__})"
 
-
+#This is function called by test-email feature in settings page
 def send_test_email(session: Session, settings: Settings, recipient: str) -> None:
     """Send a one-off SMTP test without creating or changing an alert/outbox row."""
     normalized_recipient = recipient.strip()
@@ -407,13 +382,12 @@ def send_test_email(session: Session, settings: Settings, recipient: str) -> Non
     message["Subject"] = "[NEM Monitoring] SMTP test"
     message["From"] = formataddr(("NEM Plant Monitoring", config["from_address"]))
     message["To"] = normalized_recipient
-    message.set_content(
-        "This is a test email from NEM Plant Monitoring.\n\n"
+    message.set_content("This is a test email from NEM Plant Monitoring.\n\n"
         "No alert or monitoring record was created or changed.\n"
     )
     _send(config, message, settings.email_smtp_timeout_seconds)
 
-
+#Background delivery and retry logic , a worker that delivers the persistent outbox jobs.
 def deliver_pending(session_factory, settings: Settings, *, batch_size: int = 20) -> int:
     """Send due outbox rows. Returns the number successfully sent."""
     sent = 0

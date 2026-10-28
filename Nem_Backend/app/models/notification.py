@@ -1,4 +1,4 @@
-"""Supervisor assignments and the persistent email notification outbox."""
+# Supervisor assignments and the persistent email notification outbox.
 from datetime import datetime, timezone
 from typing import Any
 
@@ -8,7 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base
 from app.db.session import UTCDateTime
 
-
+#This table stores which supervisors are directly assigned to which assets.
 class AssetSupervisor(Base):
     #Supervisor responsible for an asset; children inherit from the nearest assigned ancestor.
     __tablename__ = "nem_asset_supervisors"
@@ -19,7 +19,7 @@ class AssetSupervisor(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("auth_users.id", ondelete="CASCADE"), index=True, nullable=False)
     created_at: Mapped[datetime] = mapped_column(UTCDateTime(), default=lambda: datetime.now(timezone.utc), nullable=False)
 
-
+#it stores email jobs so that they can be retried instead of relying on an email being sent immediately when an alert occurs.
 class EmailNotification(Base):
     #One outbox row per (alert, severity, recipient); the unique key prevents duplicate emails.
     __tablename__ = "nem_email_notifications"

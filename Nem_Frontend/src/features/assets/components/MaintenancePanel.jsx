@@ -443,6 +443,10 @@ const openEdit = (record) => {
       setError("Maintenance title is required.");
       return;
     }
+    if (dialog.kind === "create" && !values.notes.trim()) {
+      setError("Description / work details are required.");
+      return;
+    }
     const terminalRecord =
       dialog.kind === "edit" &&
       ["completed", "cancelled"].includes(dialog.record.status);
@@ -484,9 +488,20 @@ const openEdit = (record) => {
 
     setBusy(true);
     try {
-      await api.patch(`/maintenance/${dialog.record.id}`, payload);
+      if (dialog.kind === "create") {
+        await api.post("/maintenance", {
+          asset_id: Number(assetId),
+          ...payload,
+        });
+      } else {
+        await api.patch(`/maintenance/${dialog.record.id}`, payload);
+      }
       setDialog(null);
-      setNotice("Maintenance job updated.");
+      setNotice(
+        dialog.kind === "create"
+          ? "Maintenance job created."
+          : "Maintenance job updated."
+      );
       await loadRecords();
       await onChanged?.();
     } catch (requestError) {
@@ -726,6 +741,10 @@ const openEdit = (record) => {
             className="btn-primary"
             onClick={() => {
               if (!canAddMaintenance) return;
+              setError("");
+              setNotice("");
+              setValues(formValues(null));
+              setDialog({ kind: "create" });
             }}
             disabled={!canAddMaintenance || busy}
             title={
@@ -1119,8 +1138,12 @@ const openEdit = (record) => {
         </Modal>
       )}
 
-      {dialog?.kind === "edit" && (
-        <Modal title="Edit maintenance" onClose={() => { if (!busy) setDialog(null); }} wide>
+      {(dialog?.kind === "create" || dialog?.kind === "edit") && (
+        <Modal
+          title={dialog.kind === "create" ? "Add maintenance" : "Edit maintenance"}
+          onClose={() => { if (!busy) setDialog(null); }}
+          wide
+        >
           <form className="maintenance-form" onSubmit={save}>
             {error && <p className="notice error" role="alert">{error}</p>}
             <fieldset disabled={!canManageMaintenance} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
@@ -1152,7 +1175,13 @@ const openEdit = (record) => {
 </label>
               )}
               <label className="field">Priority <span className="req">*</span>
-                <select name="priority" value={values.priority} onChange={updateValue} required disabled={busy} />
+                <select name="priority" value={values.priority} onChange={updateValue} required disabled={busy}>
+                  {PRIORITIES.map((item) => (
+                    <option key={item} value={item}>
+                      {item[0].toUpperCase() + item.slice(1)}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label className="field">Planned start {plannedDatesRequired && <span className="req">*</span>}
                 <input type="datetime-local" name="planned_start_at" value={values.planned_start_at} onChange={updateValue} required={plannedDatesRequired} disabled={busy || isSupervisor} />
@@ -1179,7 +1208,7 @@ const openEdit = (record) => {
                 <textarea name="parts_used" value={values.parts_used} onChange={updateValue} rows={2} disabled={busy} />
               </label>
               <label className="field maintenance-form-wide">Description / work details
-                <textarea name="notes" value={values.notes} onChange={updateValue} rows={3} maxLength={10000} disabled={busy} />
+                <textarea name="notes" value={values.notes} onChange={updateValue} rows={3} maxLength={10000} required={dialog.kind === "create"} disabled={busy} />
               </label>
               <label className="field maintenance-form-wide">Completion notes
                 <textarea name="completion_notes" value={values.completion_notes} onChange={updateValue} rows={3} disabled={busy} />

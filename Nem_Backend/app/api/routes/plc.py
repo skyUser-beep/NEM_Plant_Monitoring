@@ -13,6 +13,8 @@ from app.schemas.opcua import OpcUaReadRequest, OpcUaReadResponse # Request and 
 from app.schemas.reading import ReadingCreate, ReadingRead # reading before ingestion and how reading is represented in API response
 import asyncio
 from uuid import uuid4
+from fastapi import HTTPException, Query, Request
+from asyncua import ua
 
 _discovery_jobs={}
 _discovery_lock=asyncio.Lock()
@@ -70,9 +72,6 @@ async def plc_connection_test(request: Request) -> dict[str, object]:
     except (OpcUaConfigurationError, OpcUaConnectionError) as error:
         raise opcua_http_error(error) from error
 
-
-from fastapi import HTTPException, Query, Request
-from asyncua import ua
 
 #Discover the PLC nodes
 @router.post("/discover")
