@@ -415,9 +415,6 @@ function AssignmentModal({ template, onClose, onComplete }) {
   const [saving, setSaving] = useState(false);
   const [review, setReview] = useState(false);
   const [error, setError] = useState("");
-  const [suggesting, setSuggesting] = useState(false);
-  const [ruleRequests, setRuleRequests] = useState([]);
-  const [reviewingId, setReviewingId] = useState(null);
 
   useEffect(() => {
     const onKeyDown = (event) => {
@@ -435,15 +432,6 @@ function AssignmentModal({ template, onClose, onComplete }) {
       .finally(() => alive && setLoading(false));
     return () => { alive = false; };
   }, []);
-
-  
-useEffect(() => {
-  if (isAdministrator) {
-    loadPendingRequests();
-  } else {
-    setRuleRequests([]);
-  }
-}, [isAdministrator]);
 
   useEffect(() => {
     let alive = true;

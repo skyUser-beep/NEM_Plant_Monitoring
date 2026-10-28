@@ -4,6 +4,7 @@ import React, {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
 } from "react";
@@ -75,6 +76,85 @@ export const Modal = ({ title, onClose, children, wide }) => {
     document.body
   );
 };
+
+const MENU_MARGIN = 8;
+const MENU_GAP = 4;
+
+// Dropdown menu rendered in a portal with fixed positioning, so scroll
+// containers and sibling stacking contexts cannot clip or cover it. It is
+// anchored to the parent element of its placeholder, opens upward when there
+// is not enough room below, and stays inside the viewport horizontally.
+export function FloatingMenu({ align = "left", children, ...rest }) {
+  const markerRef = useRef(null);
+  const menuRef = useRef(null);
+
+  useLayoutEffect(() => {
+    const anchor = markerRef.current?.parentElement;
+    const menu = menuRef.current;
+    if (!anchor || !menu) return undefined;
+
+    const place = () => {
+      const rect = anchor.getBoundingClientRect();
+      const viewportWidth = document.documentElement.clientWidth;
+      const viewportHeight = window.innerHeight;
+
+      menu.style.maxHeight = "";
+      const width = menu.offsetWidth;
+      const height = menu.offsetHeight;
+      const spaceBelow = viewportHeight - rect.bottom - MENU_GAP - MENU_MARGIN;
+      const spaceAbove = rect.top - MENU_GAP - MENU_MARGIN;
+      const openUp = height > spaceBelow && spaceAbove > spaceBelow;
+      const available = Math.max(openUp ? spaceAbove : spaceBelow, 80);
+      const shownHeight = Math.min(height, available);
+
+      const top = openUp
+        ? rect.top - MENU_GAP - shownHeight
+        : rect.bottom + MENU_GAP;
+      const preferredLeft = align === "right" ? rect.right - width : rect.left;
+      const left = Math.max(
+        MENU_MARGIN,
+        Math.min(preferredLeft, viewportWidth - width - MENU_MARGIN)
+      );
+
+      menu.style.top = `${Math.max(MENU_MARGIN, top)}px`;
+      menu.style.left = `${left}px`;
+      menu.style.maxHeight = `${available}px`;
+      menu.style.visibility = "visible";
+    };
+
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [align, children]);
+
+  return (
+    <>
+      <span ref={markerRef} hidden />
+      {createPortal(
+        <div
+          {...rest}
+          ref={menuRef}
+          className="menu floating-menu"
+          style={{
+            position: "fixed",
+            visibility: "hidden",
+            zIndex: 1000,
+            maxWidth: `calc(100vw - ${MENU_MARGIN * 2}px)`,
+            overflowY: "auto",
+            boxSizing: "border-box",
+          }}
+        >
+          {children}
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
 
 const ConfirmationContext = createContext(null);
 

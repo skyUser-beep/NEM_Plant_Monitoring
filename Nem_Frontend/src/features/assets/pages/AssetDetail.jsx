@@ -28,6 +28,7 @@ import {
 import {
   CreateModal,
   EmptyState,
+  FloatingMenu,
   Modal,
   StatusBadge,
   useConfirmation,
@@ -653,6 +654,7 @@ export default function AssetDetail() {
       const openDropdowns = document.querySelectorAll(
         ".asset-page .dropdown[data-menu-open='true']"
       );
+      if (event.target.closest(".floating-menu")) return;
       if (![...openDropdowns].some((dropdown) => dropdown.contains(event.target))) {
         closeMenus();
       }
@@ -1921,7 +1923,7 @@ const filteredEvents = [...events]
               </button>
 
               {sortMenu && (
-                <div className="menu" role="menu">
+                <FloatingMenu role="menu">
                   <div
                     role="menuitem"
                     onClick={() => {
@@ -1941,7 +1943,7 @@ const filteredEvents = [...events]
                   >
                     Name
                   </div>
-                </div>
+                </FloatingMenu>
               )}
             </div>
             <button
@@ -1975,7 +1977,7 @@ const filteredEvents = [...events]
                 <DotsIcon size={17} />
               </button>
                 {menu && (
-                  <div className="menu right" role="menu">
+                  <FloatingMenu align="right" role="menu">
                       <button
                       type="button"
                       disabled={bulkSaving || !canManageRules}
@@ -1992,7 +1994,7 @@ const filteredEvents = [...events]
                       role="menuitem"
                         onClick={() => bulk("not_activated")}
                         >Deactivate all rules</button>
-                        </div>
+                        </FloatingMenu>
                       )}
                     </div>
                     </div>
@@ -2236,7 +2238,7 @@ const filteredEvents = [...events]
                           <DotsIcon size={17} />
                         </button>
                         {ruleActionMenuId === rule.id && (
-                          <div className="menu right" role="menu">
+                          <FloatingMenu align="right" role="menu">
                             <button
                               type="button"
                               role="menuitem"
@@ -2362,7 +2364,7 @@ const filteredEvents = [...events]
                                   : "Delete permanently"}
                               </button>
                             )}
-                          </div>
+                          </FloatingMenu>
                         )}
                       </div>
                     </div>
