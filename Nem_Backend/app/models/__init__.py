@@ -9,6 +9,7 @@ from app.models.frontend_data import (
     InstructionDocumentFile,
     RuleCollection,
 )
+from app.models.notification import AssetSupervisor, EmailNotification
 from app.models.reading import Reading
 from app.models.rule import (
     Alert,
@@ -28,5 +29,6 @@ __all__ = [
     "Alert", "MonitoringEvent", "SchedulerLease",
     "MachineMonitoringState",
     "RuleCounterState",
+    "AssetSupervisor", "EmailNotification",
     "FrontendConfig", "RuleCollection", "InstructionDocument", "BackupRecord", "InstructionDocumentFile",
 ]

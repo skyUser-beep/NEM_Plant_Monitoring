@@ -23,6 +23,8 @@ from app.models import (
     Variable,
 )
 
+from app.services.email_notifications import enqueue_alert_notifications
+
 LOGGER = logging.getLogger("nem_backend.monitoring")
 
 OPERATORS: dict[str, Callable[[Any, Any], bool]] = {
@@ -374,10 +376,12 @@ def _transition_state(
             )
             session.add(alert)
             session.flush()
+            enqueue_alert_notifications(session, alert, asset, rule)
         else:
             if alert.severity != next_status:
                 previous_severity = alert.severity
                 alert.severity = next_status
+                enqueue_alert_notifications(session, alert, asset, rule)
                 emit_event(
                     session,
                     event_type="alert_severity_changed",

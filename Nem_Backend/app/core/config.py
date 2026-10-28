@@ -1,4 +1,5 @@
 from functools import lru_cache # Caches the settings object so it doesn`t need to be recreated every time
+from pathlib import Path
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import make_url
@@ -26,6 +27,11 @@ class Settings(BaseSettings):
     monitoring_scheduler_enabled: bool = True
     maintenance_due_alerts_enabled: bool = True
     monitoring_default_stale_after_seconds: int = Field(default=300, ge=1, le=31_536_000)
+    email_notifications_enabled: bool = True
+    email_notification_max_attempts: int = Field(default=5, ge=1, le=20)
+    email_smtp_timeout_seconds: int = Field(default=15, ge=1, le=120)
+    email_display_timezone: str = "UTC"
+    frontend_base_url: str = ""
     opcua_endpoint: str = ""
     opcua_username: str = ""
     opcua_password: SecretStr = SecretStr("")
@@ -36,7 +42,11 @@ class Settings(BaseSettings):
     opcua_runtime_checkpoint_seconds: int = Field(default=10, ge=1, le=300)
     opcua_subscription_publishing_interval_ms: int = Field(default=1000, ge=1)
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_file=Path(__file__).resolve().parents[2] / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 # Validating db URLs automatically
     @field_validator("database_url", "test_database_url")

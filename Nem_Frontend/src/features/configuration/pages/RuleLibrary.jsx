@@ -47,7 +47,6 @@ export const FIELDS = [
     type: "select",
     default: "number",
     options: [
-      ["number", "Number"],
       ["integer", "Integer"],
       ["boolean", "Boolean"],
     ],
@@ -70,7 +69,7 @@ export const FIELDS = [
       values.rule_type === "parameter_threshold" ||
       values.rule_type === "interval_based",
   },
-  { key: "runtime_variable_type", label: "Running signal type", type: "select", default: "boolean", options: [["boolean", "Boolean"]], disabled: true, showWhen: { key: "rule_type", equals: "interval_based" }, hint: "Choose the actual running signal for each asset during assignment." },
+  { key: "runtime_variable_type", label: "Running signal type", type: "select", default: "boolean", options: [["boolean", "Boolean"]], showWhen: { key: "rule_type", equals: "interval_based" }, hint: "Choose the actual running signal for each asset during assignment." },
   { key: "boolean_behavior", label: "Boolean rule behavior", type: "select", default: "running_time", options: [["running_time", "Accumulate running time while ON"], ["cycle_count", "Count OFF-to-ON cycles"], ["state", "Check the current ON/OFF state"]], showWhen: (values) => values.rule_type === "parameter_threshold" && values.variable_type === "boolean", hint: "Cycle counting increments once for each OFF-to-ON transition." },
   { key: "runtime_warning_hours", label: "Warning after running (hours)", type: "number", required: true, default: 1, showWhen: (values) => values.rule_type === "interval_based" || (values.rule_type === "parameter_threshold" && values.variable_type === "boolean" && values.boolean_behavior === "running_time"), hint: "Runtime accumulates only while the selected Boolean signal is ON." },
   { key: "runtime_warning_2_hours", label: "Higher warning (hours)", type: "number", required: true, default: 1.5, showWhen: (values) => values.rule_type === "interval_based" || (values.rule_type === "parameter_threshold" && values.variable_type === "boolean" && values.boolean_behavior === "running_time") },
@@ -407,6 +406,8 @@ export function templatePayload(values) {
 }
 
 function AssignmentModal({ template, onClose, onComplete }) {
+  const { user } = useAuth();
+  const isAdministrator = user?.role === "Administrator";
   const [assets, setAssets] = useState([]);
   const [variables, setVariables] = useState({});
   const [selected, setSelected] = useState(new Set());
@@ -1035,7 +1036,7 @@ const reviewRequest = async (request, action) => {
                 <div className="rule-library-actions">
                   <button className="btn-outline" onClick={() => setAssigning(template)} disabled={!canAssignRules || !template.is_enabled || needsRuntimeThresholdConfiguration(template)} title={!canAssignRules ? "You do not have permission to assign rules." : needsRuntimeThresholdConfiguration(template) ? "Edit this rule and configure running-time thresholds before assigning it." : undefined}><Copy size={15} /> Assign rule</button>
                   <button className="btn-outline"onClick={() => {setSuggesting(false);setEditing(template);setModalOpen(true);}}disabled={!canEditRules}title={!canEditRules? "Only Administrators and Supervisors can edit reusable rules.": undefined}><Pencil size={15} />Edit</button>
-                  <button className="btn-outline danger" onClick={() => remove(template)} disabled={busyId === template.id || !isAdministrator} title={!isAdministrator ? "Administrator access required to delete reusable rules." : undefined}>{busyId === template.id ? "Deleting…" : <><Trash2 size={15} /> Delete</>}</button>
+                  <button className="btn-outline danger" onClick={() => remove(template)} disabled={busyId === template.id || !isAdministrator} title={!isAdministrator ? "Administrator access required to delete reusable rules." : undefined}>{busyId === template.id ? "Deleting…" : <><Trash2 size={15} /></>}</button>
                 </div>
               </article>
             ))}
@@ -1059,22 +1060,48 @@ const reviewRequest = async (request, action) => {
           ? `${displayType(editing)} is a legacy rule type. Its evaluation settings will be preserved while you edit its name, description, severity, and availability.`
           : "Create a reusable rule, then assign it to one or more assets."
     }
-    fields={
-      editing && !supportsCurrentRuleEditor(editing)
-        ? LEGACY_EDIT_FIELDS.map((field) => ({
-            ...field,
-            disabled: isSupervisor,
-          }))
-        : editing && isSupervisor
-          ? FIELDS.map((field) => ({
-              ...field,
-              disabled: !getSupervisorEditableFields(editing).includes(
-                field.key
-              ),
-            }))
-          : FIELDS
-    }
-    initialValues={initialTemplate(editing)}
+fields={
+  editing && !supportsCurrentRuleEditor(editing)
+    ? LEGACY_EDIT_FIELDS.map((field) => ({
+        ...field,
+        disabled: isSupervisor,
+      }))
+    : editing && isSupervisor
+      ? FIELDS.map((field) => ({
+          ...field,
+          disabled: ![
+            ...getSupervisorEditableFields(editing),
+            "threshold",
+          ].includes(field.key),
+        }))
+      : FIELDS
+}
+    initialValues={
+  suggesting && !editing
+    ? {
+        name: "",
+        description: "",
+        rule_type: "",
+        variable_type: "",
+        variable_key: "",
+        runtime_variable_type: "",
+        boolean_behavior: "",
+        runtime_warning_hours: "",
+        runtime_warning_2_hours: "",
+        runtime_alert_hours: "",
+        cycle_warning_threshold_1: "",
+        cycle_warning_threshold_2: "",
+        cycle_alert_threshold: "",
+        operator: "",
+        threshold: "",
+        expected_boolean: "",
+        severity: "",
+        is_enabled: "",
+        evaluation_interval_seconds: "",
+        stale_after_seconds: "",
+      }
+    : initialTemplate(editing)
+}
     submitLabel={
       editing
         ? "Save rule"

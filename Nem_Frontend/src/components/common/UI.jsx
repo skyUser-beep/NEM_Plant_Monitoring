@@ -215,12 +215,14 @@ export function ConfirmationProvider({ children }) {
             >
               {request.cancelLabel}
             </button>
-            <button
-              type="button"
-              className={request.destructive ? "btn-danger" : "btn-primary"}
-              onClick={() => finish(true)}
-            >
-              {request.confirmLabel}
+           <button
+          type="button"
+          className={request.destructive ? "btn-danger" : "btn-primary"}
+          onClick={() => finish(true)}
+          aria-label={request.confirmLabel || request.title}
+          title={request.confirmLabel || request.title}
+          >
+            {request.confirmLabel}
             </button>
           </div>
         </Modal>

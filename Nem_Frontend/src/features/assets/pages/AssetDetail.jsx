@@ -1,4 +1,4 @@
-
+﻿
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import { Download, Trash2 } from "lucide-react";
@@ -10,6 +10,7 @@ import {
   createLiveUpdateScheduler,
   subscribeLiveUpdates,
 } from "../../../services/liveUpdates.js";
+import AssetSupervisors from "../components/AssetSupervisors.jsx";
 import CurrentMaintenanceCards from "../components/CurrentMaintenanceCards.jsx";
 import MaintenancePanel from "../components/MaintenancePanel.jsx";
 import "./AssetDetail.css";
@@ -564,6 +565,7 @@ export default function AssetDetail() {
   const { user } = useAuth();
   const isAdministrator = user?.role === "Administrator";
   const isSupervisor = user?.role === "Supervisor";
+  const isOperator = user?.role === "Operator";
   const canManageRules = isAdministrator || isSupervisor;
   const canManageLogbook = canManageRules;
   const { id } = useParams();
@@ -1766,6 +1768,7 @@ const filteredEvents = [...events]
               </span>
             )}
           </div>
+          {isAdministrator && <AssetSupervisors assetId={asset.id} />}
         </div>
 
         <div className="asset-links">
@@ -1786,24 +1789,22 @@ const filteredEvents = [...events]
           >
             {deletingAsset ? "Deleting asset…" : "Delete asset"}
           </button>
-
           <button
-            type="button"
-            className="link-btn"
-            disabled={isSupervisor}
-            title={
-              isSupervisor
-                ? "Supervisors cannot manage variables."
-                : "View configured variables; only Administrators can change them."
-            }
-            onClick={() => {
-              if (isSupervisor) return;
-              setModal("variables");
+          type="button"
+          className="link-btn"
+          disabled={isSupervisor || isOperator}
+          title={
+            isSupervisor || isOperator
+            ? "Supervisors and Operators cannot manage variables."
+            : "View configured variables; only Administrators can change them."
+          }
+          onClick={() => {
+            if (isSupervisor || isOperator) return;
+            setModal("variables");
             }}
-          >
-            <AssetIcon size={17} /> Variables
-          </button>
-
+            >
+              <AssetIcon size={17} /> Variables
+            </button>
           <button
             className="icon-outline"
             title="Open in new tab"
@@ -2333,36 +2334,29 @@ const filteredEvents = [...events]
                                     Archive
                                   </button>
                                   <button
-                                    type="button"
-                                    role="menuitem"
-                                    onClick={() => {
-                                      setRuleActionMenuId(null);
-                                      permanentlyDeleteRule(rule);
-                                    }}
-                                    disabled={deletingRuleId !== null || !isAdministrator}
-                                    title={!isAdministrator ? "Administrator access required for permanent deletion." : undefined}
+                                  type="button"
+                                  className="btn-outline danger"
+                                  onClick={() => deleteEvent(event)}
+                                  disabled={!isAdministrator || deletingEventId !== null}
+                                  title="Delete event permanently"
+                                  aria-label="Delete event permanently"
                                   >
-                                    {deletingRuleId === rule.id
-                                      ? "Deleting…"
-                                      : "Delete permanently"}
-                                  </button>
+                                    <Trash2 size={16} />
+                                    Delete
+                                    </button>
                                 </>
                               )}
                             {lifecycleStatus(rule) === "completed" && (
-                              <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                  setRuleActionMenuId(null);
-                                  permanentlyDeleteRule(rule);
-                                }}
-                                disabled={deletingRuleId !== null || !isAdministrator}
-                                title={!isAdministrator ? "Administrator access required for permanent deletion." : undefined}
-                              >
-                                {deletingRuleId === rule.id
-                                  ? "Deleting…"
-                                  : "Delete permanently"}
-                              </button>
+                        <button
+                        type="button"
+                        className="btn-outline danger"
+                        onClick={() => deleteEvent(event)}
+                        disabled={!isAdministrator || deletingEventId !== null}
+                        title="Delete event permanently"
+                        aria-label="Delete event permanently"
+                        >
+                          <Trash2 size={16} />
+                          Delete</button>
                             )}
                           </FloatingMenu>
                         )}
@@ -3417,16 +3411,16 @@ const filteredEvents = [...events]
                       >
                         Edit
                       </button>
-                      <button
-                        type="button"
-                        className="btn-danger"
-                        onClick={() => deleteVariable(variable)}
-                        disabled={deletingVariableId !== null || !isAdministrator}
-                        title={!isAdministrator ? "Administrator access required to manage variables." : undefined}
-                      >
-                        {deletingVariableId === variable.id
-                          ? "Deleting…"
-                          : "Delete"}
+                     <button
+                     type="button"
+                     className="btn-outline danger"
+                     onClick={() => deleteEvent(event)}
+                    disabled={!isAdministrator || deletingEventId !== null}
+                    title="Delete event permanently"
+                    aria-label="Delete event permanently"
+                    >
+                      <Trash2 size={16} />
+                      {deletingEventId === event.id ? "Deleting..." : ""}
                       </button>
                     </td>
                   </tr>

@@ -25,6 +25,7 @@ from app.api.routes import (
     frontend_compat,
     maintenance,
     monitoring,
+    notifications,
     plc,
     readings,
     rules,
@@ -35,6 +36,7 @@ from app.services.auth_security import hash_session_token
 from app.core.config import Settings, get_settings
 from app.db.init_db import initialize_database
 from app.db.session import create_database_engine, create_session_factory
+from app.services.email_notifications import deliver_pending
 from app.services.maintenance_schedule import emit_due_schedule_events
 from app.services.monitoring_engine import (
     acquire_scheduler_lease,
@@ -69,6 +71,15 @@ async def _maintenance_due_alert_loop(session_factory, owner_id: str) -> None:
         except SQLAlchemyError:
             LOGGER.exception("Maintenance due-date evaluation failed")
         await asyncio.sleep(60)
+
+
+async def _email_delivery_loop(session_factory, settings: Settings) -> None:
+    while True:
+        try:
+            await asyncio.to_thread(deliver_pending, session_factory, settings)
+        except Exception:
+            LOGGER.exception("Email notification delivery loop failed")
+        await asyncio.sleep(10)
 
 
 async def _monitoring_evaluation_loop(
@@ -143,6 +154,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 ),
                 name="monitoring-evaluation",
             )
+        email_task = None
+        if selected_settings.email_notifications_enabled:
+            email_task = asyncio.create_task(
+                _email_delivery_loop(session_factory, selected_settings),
+                name="email-notifications",
+            )
         maintenance_due_task = None
         if selected_settings.maintenance_due_alerts_enabled:
             maintenance_due_task = asyncio.create_task(
@@ -155,6 +172,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 monitoring_task.cancel()
                 try:
                     await monitoring_task
+                except asyncio.CancelledError:
+                    pass
+            if email_task is not None:
+                email_task.cancel()
+                try:
+                    await email_task
                 except asyncio.CancelledError:
                     pass
             if maintenance_due_task is not None:
@@ -502,6 +525,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     application.include_router(readings.router, prefix="/api/v1")
     application.include_router(rules.router, prefix="/api/v1")
     application.include_router(monitoring.router, prefix="/api/v1")
+    application.include_router(notifications.router, prefix="/api/v1")
     application.include_router(plc.router, prefix="/api/v1")
     application.include_router(maintenance.router, prefix="/api/v1")
     application.include_router(dashboard.router, prefix="/api/v1")

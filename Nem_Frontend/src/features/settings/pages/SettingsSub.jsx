@@ -221,6 +221,9 @@ function SettingsForm({ section }) {
   const canManageSettings = user?.role === "Administrator";
   const [v, setV] = useState(null);
   const [msg, setMsg] = useState("");
+  const [testRecipient, setTestRecipient] = useState("");
+  const [testMsg, setTestMsg] = useState("");
+  const [sendingTest, setSendingTest] = useState(false);
   useEffect(() => {
     setMsg(""); setV(null);
     if (!canManageSettings) {
@@ -232,12 +235,28 @@ function SettingsForm({ section }) {
   if (!v) return msg ? <div className="notice error">{msg}</div> : <div className="loading">LoadingÃ¢â‚¬Â¦</div>;
   const save = async () => {
     if (!canManageSettings) return;
+    setTestMsg("");
     try {
       const saved = await api.put(`/settings/${section}`, v);
       setV(saved);
       setMsg("Settings saved.");
     } catch (error) {
       setMsg(`Could not save settings: ${error.message}`);
+    }
+  };
+  const sendTestEmail = async () => {
+    if (!canManageSettings || sendingTest) return;
+    setSendingTest(true);
+    setTestMsg("");
+    try {
+      const result = await api.post("/notifications/email/test", {
+        recipient: testRecipient.trim(),
+      });
+      setTestMsg(result.message);
+    } catch (error) {
+      setTestMsg(`Could not send test email: ${error.message}`);
+    } finally {
+      setSendingTest(false);
     }
   };
   return (
@@ -265,6 +284,47 @@ function SettingsForm({ section }) {
       ))}
       <div><button className="btn-primary" disabled={!canManageSettings} title={!canManageSettings ? "Only Administrators can change global settings." : undefined} onClick={save}>Save</button></div>
       {msg && <p className={"notice" + (/^Could not/.test(msg) ? " error" : "")} role="status">{msg}</p>}
+      {section === "email" && canManageSettings && (
+        <div className="form" style={{ marginTop: 20 }}>
+          <label>
+            Test recipient email
+            <input
+              type="email"
+              maxLength={254}
+              autoComplete="email"
+              value={testRecipient}
+              onChange={(event) => {
+                setTestRecipient(event.target.value);
+                setTestMsg("");
+              }}
+              placeholder="recipient@example.com"
+            />
+          </label>
+          <p className="hint">
+            Save the SMTP settings first. The test uses the saved sender
+            sky@nem.co.in and does not create an alert. SMTP acceptance does
+            not confirm inbox receipt.
+          </p>
+          <div>
+            <button
+              type="button"
+              className="btn-outline"
+              disabled={sendingTest || !testRecipient.trim()}
+              onClick={sendTestEmail}
+            >
+              {sendingTest ? "Sending test…" : "Send test email"}
+            </button>
+          </div>
+          {testMsg && (
+            <p
+              className={"notice" + (/^Could not/.test(testMsg) ? " error" : "")}
+              role="status"
+            >
+              {testMsg}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   );
 }

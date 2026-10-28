@@ -168,7 +168,6 @@ export default function Layout() {
       {
         title: "Sign out",
         confirmLabel: "Sign out",
-        destructive: true,
       }
     );
     if (!accepted) return;

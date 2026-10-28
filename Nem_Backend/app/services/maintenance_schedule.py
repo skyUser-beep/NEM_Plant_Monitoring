@@ -4,7 +4,8 @@ from datetime import date, datetime, timedelta, timezone
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Alert, MaintenanceSchedule
+from app.models import Alert, Asset, MaintenanceSchedule
+from app.services.email_notifications import enqueue_alert_notifications
 from app.services.monitoring_engine import emit_event
 
 RECURRENCE_UNITS = {"days", "weeks", "months", "years"}
@@ -106,6 +107,9 @@ def emit_due_schedule_events(session: Session, *, today: date) -> int:
             )
             session.add(alert)
             session.flush()
+            maintenance_asset = session.get(Asset, schedule.asset_id)
+            if maintenance_asset is not None:
+                enqueue_alert_notifications(session, alert, maintenance_asset, None)
         if already_alerted:
             changed = True
             continue
