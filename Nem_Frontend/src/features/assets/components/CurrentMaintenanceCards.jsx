@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../../../services/api.js";
 import { useAuth } from "../../auth/AuthContext.jsx";
@@ -38,17 +38,36 @@ export default function CurrentMaintenanceCards({
   const [error, setError] = useState("");
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [editingRecordId, setEditingRecordId] = useState(null);
+  const lastLoadedDate = useRef("");
+  const loadingRef = useRef(false);
   const busy = startingRecordId !== null || completingRecordId !== null;
 
-  const openEdit = (record) => {
-    if (!canManageMaintenance) return;
-    setEditingRecordId(record.id);
-    navigate(`/assets/${assetId}/maintenance/schedules/${record.schedule_id || record.id}/edit`, {
+const openEdit = (record) => {
+  if (!canManageMaintenance) return;
+
+  setEditingRecordId(record.id);
+
+  if (record.schedule_id) {
+    navigate(
+      `/assets/${assetId}/maintenance/schedules/${record.schedule_id}/edit`,
+      {
+        state: { maintenanceRecord: record },
+      }
+    );
+    return;
+  }
+
+  navigate(
+    `/assets/${assetId}/maintenance/${record.id}/edit`,
+    {
       state: { maintenanceRecord: record },
-    });
-  };
+    }
+  );
+};
 
   const loadCurrentMaintenance = useCallback(async () => {
+    if (loadingRef.current) return false;
+    loadingRef.current = true;
     setError("");
     try {
       const [schedules, maintenanceRecords] = await Promise.all([
@@ -59,6 +78,7 @@ export default function CurrentMaintenanceCards({
         maintenanceRecords.map((record) => [record.id, record])
       );
       const today = todayDateInput();
+      lastLoadedDate.current = today;
       const completedScheduledRecords = maintenanceRecords.filter(
         (record) =>
           record.schedule_id != null && record.status === "completed"
@@ -81,15 +101,72 @@ export default function CurrentMaintenanceCards({
                   record.planned_due_date <= today))
           )
       );
+      return true;
     } catch (loadError) {
       setError(loadError.message || "Could not load current maintenance.");
+      return false;
     } finally {
+      loadingRef.current = false;
       setLoading(false);
     }
   }, [assetId, onCompletedRecordsCount]);
 
   useEffect(() => {
     loadCurrentMaintenance();
+  }, [loadCurrentMaintenance]);
+
+  useEffect(() => {
+    let midnightTimer;
+    let dateRefreshInProgress = false;
+    let disposed = false;
+
+    const refreshIfDateChanged = async () => {
+      if (
+        disposed ||
+        document.visibilityState !== "visible" ||
+        todayDateInput() === lastLoadedDate.current ||
+        dateRefreshInProgress
+      ) {
+        return;
+      }
+
+      dateRefreshInProgress = true;
+      try {
+        await loadCurrentMaintenance();
+      } finally {
+        dateRefreshInProgress = false;
+      }
+    };
+
+    const scheduleMidnightRefresh = () => {
+      if (disposed) return;
+      window.clearTimeout(midnightTimer);
+      const now = new Date();
+      const nextMidnight = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() + 1
+      );
+      midnightTimer = window.setTimeout(async () => {
+        await refreshIfDateChanged();
+        if (!disposed) scheduleMidnightRefresh();
+      }, Math.max(0, nextMidnight.getTime() - now.getTime()) + 100);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void refreshIfDateChanged();
+      }
+      scheduleMidnightRefresh();
+    };
+
+    scheduleMidnightRefresh();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      disposed = true;
+      window.clearTimeout(midnightTimer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, [loadCurrentMaintenance]);
 
   const startMaintenance = async (record) => {

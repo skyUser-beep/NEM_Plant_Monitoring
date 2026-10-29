@@ -16,6 +16,7 @@ export default function AdminUsersPage() {
   const [contactError, setContactError] = useState("");
   const [emailError, setEmailError] = useState("");
   const requiresContactDetails = ["Supervisor", "Operator"].includes(role);
+  const requiresEmail = role === "Supervisor";
   const [selectedUserId, setSelectedUserId] = useState("");
   const [selectedRole, setSelectedRole] = useState("Supervisor");
   const [selectedActive, setSelectedActive] = useState(true);
@@ -24,6 +25,7 @@ export default function AdminUsersPage() {
   const [selectedContactError, setSelectedContactError] = useState("");
   const [selectedEmailError, setSelectedEmailError] = useState("");
   const [resetPassword, setResetPassword] = useState("");
+  const [resetPasswordError, setResetPasswordError] = useState("");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -33,8 +35,8 @@ export default function AdminUsersPage() {
 
   const deleteUser = async (userId) => {
     const confirmed = await confirm(
-      "Are you sure you want to delete this account? This cannot be undone.",
-      { title: "Delete account", confirmLabel: "Delete", cancelLabel: "Cancel", destructive: true }
+      "Delete this account if it has no linked records. Accounts with historical or operational records will be disabled instead.",
+      { title: "Delete or disable account", confirmLabel: "Continue", cancelLabel: "Cancel", destructive: true }
     );
     if (!confirmed) return;
     setBusy(true);
@@ -42,9 +44,18 @@ export default function AdminUsersPage() {
     setMessage("");
     setDeletingUserId(userId);
     try {
-      await api.del(`/auth/users/${userId}`);
-      setUsers((current) => current.filter((u) => u.id !== userId));
-      setMessage("Account deleted.");
+      const result = await api.del(`/auth/users/${userId}`);
+      if (result.action === "deactivated") {
+        setUsers((current) =>
+          current.map((account) =>
+            account.id === userId ? result.user : account
+          )
+        );
+        setMessage("Account has linked records and was disabled.");
+      } else {
+        setUsers((current) => current.filter((account) => account.id !== userId));
+        setMessage("Account deleted.");
+      }
     } catch (deleteError) {
       setError(deleteError.message || "Could not delete the account.");
     } finally {
@@ -73,6 +84,7 @@ export default function AdminUsersPage() {
     setSelectedContact(selected?.contact_number ?? "");
     setSelectedEmail(selected?.email_address ?? "");
     setResetPassword("");
+    setResetPasswordError("");
   }, [selectedUserId, users]);
 
   const INDIAN_PHONE_REGEX = /^(\+91|91|0)?[6-9]\d{9}$/;
@@ -108,8 +120,12 @@ export default function AdminUsersPage() {
       setContactError("");
       setEmailError("");
       try {
-        if (requiresContactDetails && (!contactNumber.trim() || !email.trim())) {
-          setError("Contact number and email are required for Supervisor and Operator accounts.");
+        if (requiresContactDetails && !contactNumber.trim()) {
+          setError("Contact number is required for Supervisor and Operator accounts.");
+          return;
+        }
+        if (requiresEmail && !email.trim()) {
+          setError("Email is required for Supervisor accounts.");
           return;
         }
         const contactResult = validatePhone(contactNumber);
@@ -150,7 +166,12 @@ export default function AdminUsersPage() {
     setMessage("");
     setSelectedContactError("");
     setSelectedEmailError("");
+    setResetPasswordError("");
     try {
+      if (resetPassword.length > 0 && resetPassword.length < 6) {
+        setResetPasswordError("Password must be at least 6 characters.");
+        return;
+      }
       const contactResult = validatePhone(selectedContact);
       if (!contactResult.valid) {
         setSelectedContactError("Enter a valid Indian mobile number (10 digits, optionally prefixed with +91).");
@@ -167,10 +188,11 @@ export default function AdminUsersPage() {
         contact_number: contactResult.normalized || null,
         email_address: emailResult.normalized || null,
       };
-      if (resetPassword) changes.password = resetPassword;
+      if (resetPassword.length > 0) changes.password = resetPassword;
       const updated = await api.patch(`/auth/users/${selectedUserId}`, changes);
       setUsers((current) => current.map((user) => user.id === updated.id ? updated : user));
       setResetPassword("");
+      setResetPasswordError("");
       setMessage("Account settings updated.");
     } catch (saveError) {
       setError(saveError.message || "Could not update the account.");
@@ -204,14 +226,14 @@ export default function AdminUsersPage() {
             />
             </label>
             <label className="field">
-              Temporary password (minimum 12 characters)
+              Temporary password (minimum 6 characters)
               <input
               type="password"
               autoComplete="new-password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               required
-              minLength={12}
+              minLength={6}
               maxLength={1024}
               disabled={busy || !canManageUsers}
               title={!canManageUsers ? "Administrator access required" : undefined}
@@ -257,7 +279,7 @@ export default function AdminUsersPage() {
                         onChange={(event) => setEmail(event.target.value)}
                         placeholder="Enter email address"
                         autoComplete="email"
-                        required
+                        required={requiresEmail}
                         maxLength={254}
                         disabled={busy || !canManageUsers}
                         title={!canManageUsers ? "Administrator access required" : undefined}
@@ -346,12 +368,53 @@ export default function AdminUsersPage() {
                 <input type="email" value={selectedEmail} onChange={(event) => setSelectedEmail(event.target.value)} placeholder="Enter email address" autoComplete="email" maxLength={254} disabled={busy || !canManageUsers} title={!canManageUsers ? "Administrator access required" : undefined} />
                 {selectedEmailError && <span className="notice error" style={{ display: "block", marginTop: 4, fontSize: "12px" }}>{selectedEmailError}</span>}
               </label>
-              <label className="field">Reset password (optional, minimum 12 characters)
-                <input type="password" autoComplete="new-password" value={resetPassword} onChange={(event) => setResetPassword(event.target.value)} minLength={12} maxLength={1024} disabled={busy || !canManageUsers} title={!canManageUsers ? "Administrator access required" : undefined} />
+              <label className="field">Reset password (optional, minimum 6 characters)
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  value={resetPassword}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setResetPassword(value);
+                    setResetPasswordError(
+                      value.length > 0 && value.length < 6
+                        ? "Password must be at least 6 characters."
+                        : ""
+                    );
+                  }}
+                  minLength={6}
+                  maxLength={1024}
+                  aria-invalid={Boolean(resetPasswordError)}
+                  aria-describedby={resetPasswordError ? "reset-password-error" : undefined}
+                  disabled={busy || !canManageUsers}
+                  title={!canManageUsers ? "Administrator access required" : undefined}
+                />
+                {resetPasswordError && (
+                  <span
+                    id="reset-password-error"
+                    className="notice error"
+                    role="alert"
+                    style={{ display: "block", marginTop: 4, fontSize: "12px" }}
+                  >
+                    {resetPasswordError}
+                  </span>
+                )}
               </label>
-              <button type="button" className="btn-primary" onClick={saveUser} disabled={busy || !canManageUsers || (resetPassword.length > 0 && resetPassword.length < 12)} title={!canManageUsers ? "Administrator access required" : undefined}>
-                {busy ? "Saving…" : "Save account settings"}
-              </button>
+              <div className="account-settings-actions">
+                <button
+                type="button"
+                className="btn-primary"
+                onClick={saveUser}
+                disabled={
+                  busy ||
+                  !canManageUsers ||
+                  (resetPassword.length > 0 && resetPassword.length < 6)
+                }
+                title={!canManageUsers ? "Administrator access required" : undefined}
+                >
+                  {busy ? "Saving…" : "Save account settings"}
+                </button>
+              </div>
             </div>
           </>
         )}

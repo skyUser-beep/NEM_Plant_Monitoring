@@ -59,8 +59,9 @@ function getDocumentsArray(response) {
 export default function CreateMaintenanceSchedulePage() {
   const { user } = useAuth();
   const canManageMaintenance = ["Administrator", "Supervisor"].includes(user?.role);
-  const { id, scheduleId } = useParams();
-  const isEdit = Boolean(scheduleId);
+  const { id, scheduleId, recordId } = useParams();
+  const isStandaloneEdit = Boolean(recordId);
+  const isEdit = Boolean(scheduleId || recordId);
   const navigate = useNavigate();
   const location = useLocation();
   const maintenanceRecord = location.state?.maintenanceRecord;
@@ -165,7 +166,7 @@ export default function CreateMaintenanceSchedulePage() {
           recurrence_unit:
             record.recurrence_unit ?? "months",
         });
-        setSelectedDocuments(schedule.instruction_documents || []);
+        setSelectedDocuments(record.instruction_documents || []);
       } catch (err) {
         console.error("Failed to load maintenance:", err);
 

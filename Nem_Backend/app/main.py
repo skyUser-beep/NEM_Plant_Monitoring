@@ -321,6 +321,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             or policy_path.startswith("/api/v1/rule-templates/")
             and method == "POST"
             and policy_path.endswith("/assign")
+            or policy_path == "/api/v1/auth/change-password"
+            and method == "POST"
             or supervisor_content_create
             or supervisor_rule_template_update
         )
@@ -356,7 +358,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 and policy_segments[4].isdecimal()
                 and policy_segments[5] in {"start", "complete"}
             )
-            if admin_only_write or not (operator_acknowledge or operator_maintenance_action):
+            operator_password_change = (
+                method == "POST"
+                and policy_path == "/api/v1/auth/change-password"
+            )
+            if admin_only_write or not (
+                operator_acknowledge
+                or operator_maintenance_action
+                or operator_password_change
+            ):
                 return JSONResponse(status_code=403,content={
                         "detail": (
                             "Operators may acknowledge or complete resolved alerts, "

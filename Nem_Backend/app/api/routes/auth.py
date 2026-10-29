@@ -4,14 +4,20 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import delete, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 import re
 
 from app.db.session import get_db
-from app.models import AuthSession, User
+from app.models import (
+    AssetSupervisor,
+    AuthSession,
+    EmailNotification,
+    MonitoringRuleTemplateRequest,
+    User,
+)
 from app.services.auth_security import (
     hash_password,
     hash_session_token,
@@ -57,12 +63,8 @@ def _validate_phone(value: str | None) -> str | None:
     if not trimmed:
         return None
     if not _INDIAN_PHONE_REGEX.match(trimmed):
-        raise ValueError(
-            "Invalid phone number. Enter a valid 10-digit Indian mobile number "
-            "(optionally prefixed with +91)."
-        )
+        raise ValueError("Invalid phone number. Enter a valid 10-digit Indian mobile number " "(optionally prefixed with +91).")
     return _normalize_phone(trimmed)
-
 
 def _validate_email(value: str | None) -> str | None:
     if value is None:
@@ -71,16 +73,14 @@ def _validate_email(value: str | None) -> str | None:
     if not trimmed:
         return None
     if not _EMAIL_REGEX.match(trimmed):
-        raise ValueError(
-            "Invalid email address. Use a valid format such as name@domain.com."
-        )
+        raise ValueError("Invalid email address. Use a valid format such as name@domain.com.")
     return trimmed
 
 
 #This model controls account creation
 class UserCreate(BaseModel):
     username: str = Field(min_length=1, max_length=120)
-    password: str = Field(min_length=12, max_length=1024)
+    password: str = Field(min_length=6, max_length=1024)
     role: Literal["Administrator", "Supervisor", "Operator"] = "Supervisor"
     contact_number: str | None = Field(default=None, max_length=20)
     email_address: str | None = Field(default=None, max_length=254)
@@ -109,7 +109,7 @@ class UserUpdate(BaseModel):
     is_active: bool | None = None
     contact_number: str | None = Field(default=None, max_length=20)
     email_address: str | None = Field(default=None, max_length=254)
-    password: str | None = Field(default=None, min_length=12, max_length=1024)
+    password: str | None = Field(default=None, min_length=6, max_length=1024)
 
     @field_validator("contact_number")
     @classmethod
@@ -120,6 +120,11 @@ class UserUpdate(BaseModel):
     @classmethod
     def validate_email_address(cls, value: str | None) -> str | None:
         return _validate_email(value)
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str = Field(min_length=1, max_length=1024)
+    new_password: str = Field(min_length=6, max_length=1024)
 
 
 #DB Session dependency -> shortcut for asking FASTAPI to provide SQLAlchemy db session
@@ -190,6 +195,26 @@ def login(payload: LoginRequest, db: Db) -> LoginResponse:
 async def me(user: Annotated[User, Depends(get_current_user)], db: Db) -> dict:
     return _user_read(user)
 
+#Update the password
+@router.post("/change-password")
+def change_password(
+    payload: PasswordChangeRequest,
+    request: Request,
+    user: Annotated[User, Depends(get_current_user)],
+    db: Db,
+) -> dict[str, str]:
+    if not verify_password(payload.current_password, user.password_hash):
+        raise HTTPException(status_code=400, detail="Current password is incorrect")
+
+    user.password_hash = hash_password(payload.new_password)
+    current_token_hash = getattr(request.state, "auth_token_hash", None)
+    sessions_query = delete(AuthSession).where(AuthSession.user_id == user.id)
+    if current_token_hash:
+        sessions_query = sessions_query.where(AuthSession.token_hash != current_token_hash)
+    db.execute(sessions_query)
+    db.commit()
+    return {"message": "Password changed successfully"}
+
 #Logout endpoint 
 @router.post("/logout", status_code=204)
 def logout(request: Request, db: Db) -> None:
@@ -256,18 +281,52 @@ def update_user(user_id: int, payload: UserUpdate, db: Db) -> dict:
     db.refresh(user)
     return _user_read(user)
 
-#Deleting a user account -> removes the user and all their sessions so they can no longer log in
-@router.delete("/users/{user_id}", status_code=204, dependencies=[Depends(require_roles("Administrator"))])
-def delete_user(user_id: int, db: Db) -> None:
+#Delete users without linked history; deactivate accounts referenced by operational or historical records.
+@router.delete("/users/{user_id}", dependencies=[Depends(require_roles("Administrator"))])
+def delete_user(user_id: int, db: Db) -> dict:
     user = db.get(User, user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="User was not found")
     if user.role == "Administrator":
-        active_admin_count = db.scalar(
-            select(User.id).where(User.role == "Administrator", User.is_active.is_(True), User.id != user_id).limit(1)
-        )
+        active_admin_count = db.scalar(select(User.id).where(User.role == "Administrator", User.is_active.is_(True), User.id != user_id).limit(1))
         if active_admin_count is None:
             raise HTTPException(status_code=409, detail="The last administrator cannot be deleted")
+
+    has_rule_template_requests = db.scalar(
+        select(MonitoringRuleTemplateRequest.id)
+        .where(
+            or_(
+                MonitoringRuleTemplateRequest.requested_by == user_id,
+                MonitoringRuleTemplateRequest.reviewed_by == user_id,
+            )
+        )
+        .limit(1)
+    ) is not None
+    has_asset_assignments = db.scalar(
+        select(AssetSupervisor.id)
+        .where(AssetSupervisor.user_id == user_id)
+        .limit(1)
+    ) is not None
+    has_email_notifications = db.scalar(
+        select(EmailNotification.id)
+        .where(EmailNotification.user_id == user_id)
+        .limit(1)
+    ) is not None
+
     db.execute(delete(AuthSession).where(AuthSession.user_id == user_id))
+    if has_rule_template_requests or has_asset_assignments or has_email_notifications:
+        user.is_active = False
+        try:
+            db.commit()
+        except IntegrityError as error:
+            db.rollback()
+            raise HTTPException(status_code=409,detail="The account could not be deactivated because related records changed. Please retry.",) from error
+        return {"action": "deactivated", "user": _user_read(user)}
+
     db.delete(user)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError as error:
+        db.rollback()
+        raise HTTPException(status_code=409,detail="The account has linked records and could not be permanently deleted. No changes were saved.",) from error
+    return {"action": "deleted", "user_id": user_id}

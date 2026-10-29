@@ -1230,3 +1230,9 @@ html[data-theme="dark"] .event-log-section .event-log-table .btn-secondary {
 html[data-theme="dark"] .event-log-section .event-log-table .btn-secondary:hover {
   background: var(--surface, #151b23);
 }
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  pointer-events: none;
+}

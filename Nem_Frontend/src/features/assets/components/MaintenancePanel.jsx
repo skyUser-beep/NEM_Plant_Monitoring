@@ -192,7 +192,7 @@ export default function MaintenancePanel({ assetId, onChanged }) {
     if (
       !(await confirm(confirmation, {
         title: scheduled ? "Delete maintenance schedule" : "Delete maintenance",
-        confirmLabel: "Continue",
+        confirmLabel: "Delete",
         destructive: true,
       }))
     ) return;
@@ -235,7 +235,7 @@ export default function MaintenancePanel({ assetId, onChanged }) {
       `Delete maintenance schedule "${schedule.title}"${dueDate ? `, due ${dueDate}` : ""}, including its linked maintenance entries?`,
       {
         title: "Delete maintenance schedule",
-        confirmLabel: "Continue",
+        confirmLabel: "Delete",
         destructive: true,
       }
     ))) return;
@@ -354,22 +354,23 @@ const openScheduleEdit = (schedule) => {
   );
 };
 
-
-
 const openEdit = (record) => {
   if (!canManageMaintenance) return;
+
   setError("");
   setNotice("");
 
-  const editId = record.schedule_id || record.id;
+  if (record.schedule_id) {
+    navigate(
+      `/assets/${assetId}/maintenance/schedules/${record.schedule_id}/edit`,
+      { state: { maintenanceRecord: record } }
+    );
+    return;
+  }
 
   navigate(
-    `/assets/${assetId}/maintenance/schedules/${editId}/edit`,
-    {
-      state: {
-        maintenanceRecord: record,
-      },
-    }
+    `/assets/${assetId}/maintenance/${record.id}/edit`,
+    { state: { maintenanceRecord: record } }
   );
 };
 
@@ -418,35 +419,32 @@ const openEdit = (record) => {
             asset_id: Number(assetId),
             ...schedulePayload,
           });
+          setNotice("Maintenance schedule created.");
         } else {
           await api.patch(
             `/maintenance/schedules/${dialog.record.id}`,
             schedulePayload
           );
+          setNotice("Maintenance schedule updated.");
         }
+
         setDialog(null);
-        setNotice(
-          dialog.kind === "schedule-create"
-            ? "Maintenance schedule created."
-            : "Maintenance schedule updated."
-        );
         await Promise.all([loadSchedules(), loadRecords()]);
         await onChanged?.();
       } catch (requestError) {
-        setError(requestError.message || "Could not save maintenance schedule.");
+        setError(
+          requestError.message || "Could not save maintenance schedule."
+        );
       } finally {
         setBusy(false);
       }
       return;
     }
-    if (!values.title.trim()) {
-      setError("Maintenance title is required.");
-      return;
-    }
-    if (dialog.kind === "create" && !values.notes.trim()) {
-      setError("Description / work details are required.");
-      return;
-    }
+    if (!values.notes.trim()) {
+  setError("Please enter notes for the maintenance job.");
+  return;
+}
+
     const terminalRecord =
       dialog.kind === "edit" &&
       ["completed", "cancelled"].includes(dialog.record.status);
@@ -459,17 +457,24 @@ const openEdit = (record) => {
       return;
     }
 
+
     const checklist = values.checklist
       .split(/\r?\n/)
       .map((item) => item.trim())
       .filter(Boolean)
       .map((item) => ({ item, completed: false }));
+
     const payload = {
-      title: values.title.trim(),
-      maintenance_type: values.maintenance_type,
+      // Restricted fields: Administrator only
+      ...(!isSupervisor && {
+        title: values.title.trim(),
+        maintenance_type: values.maintenance_type,
+        planned_start_at: nullableDate(values.planned_start_at),
+        planned_end_at: nullableDate(values.planned_end_at),
+      }),
+
+      // Other maintenance fields
       status: values.status,
-      planned_start_at: nullableDate(values.planned_start_at),
-      planned_end_at: nullableDate(values.planned_end_at),
       priority: values.priority,
       assigned_technician: values.assigned_technician.trim() || null,
       actual_started_at: nullableDate(values.actual_started_at),
@@ -478,13 +483,18 @@ const openEdit = (record) => {
         (dialog.kind === "create" && values.status === "completed"
           ? new Date().toISOString()
           : null),
-      notes: values.notes.trim() || null,
+      notes: values.notes.trim(),
       completion_notes: values.completion_notes.trim() || null,
       parts_used: values.parts_used.trim() || null,
       checklist: checklist.length ? checklist : null,
       next_due_at: nullableDate(values.next_due_at),
-      alert_id: values.alert_id ? Number(values.alert_id) : null,
+      ...(values.alert_id.trim()
+        ? { alert_id: Number(values.alert_id) }
+        : {}),
     };
+
+    console.log("Maintenance alert_id:", values.alert_id);
+    console.log("Maintenance payload:", payload);
 
     setBusy(true);
     try {
@@ -493,15 +503,13 @@ const openEdit = (record) => {
           asset_id: Number(assetId),
           ...payload,
         });
+        setNotice("Maintenance job created.");
       } else {
         await api.patch(`/maintenance/${dialog.record.id}`, payload);
+        setNotice("Maintenance job updated.");
       }
+
       setDialog(null);
-      setNotice(
-        dialog.kind === "create"
-          ? "Maintenance job created."
-          : "Maintenance job updated."
-      );
       await loadRecords();
       await onChanged?.();
     } catch (requestError) {
@@ -735,26 +743,27 @@ const openEdit = (record) => {
               Schedule, track and review work for this asset.
             </p>
           </div>
-          <div className="maintenance-heading-actions">
-            <button
-            type="button"
-            className="btn-primary"
-            onClick={() => {
-              if (!canAddMaintenance) return;
-              setError("");
-              setNotice("");
-              setValues(formValues(null));
-              setDialog({ kind: "create" });
-            }}
-            disabled={!canAddMaintenance || busy}
-            title={
-              !canAddMaintenance
-              ? "Only Administrators can add maintenance jobs."
-              : "Add Maintenance"
-              }
-              >
-                Add Maintenance
-                </button>
+          <div className="maintenance-heading-actions">       
+<button
+  type="button"
+  className="btn-primary"
+  onClick={() => {
+    if (!canAddMaintenance || busy) return;
+
+    setError("");
+    setNotice("");
+
+    navigate(`/assets/${assetId}/maintenance/schedules/new`);
+  }}
+  disabled={!canAddMaintenance || busy}
+  title={
+    !canAddMaintenance
+      ? "Only Administrators can add maintenance jobs."
+      : "Add Maintenance"
+  }
+>
+  Add Maintenance
+</button>
           </div>
         </div>
 
@@ -790,38 +799,38 @@ const openEdit = (record) => {
             <fieldset disabled={!canManageMaintenance} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
             <div className="maintenance-form-grid">
               <label className="field">Maintenance title <span className="req">*</span>
-                <input name="title" value={scheduleValues.title} onChange={updateScheduleValue} maxLength={200} required disabled={busy || isSupervisor} />
+                <input name="title" value={scheduleValues.title} onChange={updateScheduleValue} maxLength={200} required disabled={busy} />
               </label>
               <label className="field">Maintenance type
-                <select name="maintenance_type" value={scheduleValues.maintenance_type} onChange={updateScheduleValue} disabled={busy || isSupervisor}>
+                <select name="maintenance_type" value={scheduleValues.maintenance_type} onChange={updateScheduleValue} disabled={busy}>
                   {TYPES.map((item) => <option key={item} value={item}>{item[0].toUpperCase() + item.slice(1)}</option>)}
                 </select>
               </label>
               <label className="field">Priority
-                <select name="priority" value={scheduleValues.priority} onChange={updateScheduleValue} disabled={busy || isSupervisor}>
+                <select name="priority" value={scheduleValues.priority} onChange={updateScheduleValue} >
                   {PRIORITIES.map((item) => <option key={item} value={item}>{item[0].toUpperCase() + item.slice(1)}</option>)}
                 </select>
               </label>
               <label className="field">Assigned technician
-                <input name="assigned_technician" value={scheduleValues.assigned_technician} onChange={updateScheduleValue} maxLength={200} disabled={busy || isSupervisor} />
+                <input name="assigned_technician" value={scheduleValues.assigned_technician} onChange={updateScheduleValue} maxLength={200} disabled={busy} />
               </label>
               <label className="field">Schedule start date <span className="req">*</span>
-                <input type="date" name="schedule_start_date" value={scheduleValues.schedule_start_date} onChange={updateScheduleValue} required disabled={busy || isSupervisor} />
+                <input type="date" name="schedule_start_date" value={scheduleValues.schedule_start_date} onChange={updateScheduleValue} required disabled={busy} />
                 <small className="muted">The date this maintenance plan becomes effective.</small>
               </label>
               <label className="field">First maintenance due date <span className="req">*</span>
-                <input type="date" name="first_due_date" value={scheduleValues.first_due_date} onChange={updateScheduleValue} required disabled={busy || isSupervisor} />
+                <input type="date" name="first_due_date" value={scheduleValues.first_due_date} onChange={updateScheduleValue} required disabled={busy} />
                 <small className="muted">The date by which the first maintenance occurrence must be completed.</small>
               </label>
               {dialog.kind === "schedule-edit" && (
                 <label className="field">Schedule status
-                  <select name="status" value={scheduleValues.status} onChange={updateScheduleValue} disabled={busy || isSupervisor}>
+                  <select name="status" value={scheduleValues.status} onChange={updateScheduleValue} disabled={busy}>
                     {["active", "paused", "cancelled", "completed"].map((item) => <option key={item} value={item}>{item.replaceAll("_", " ")}</option>)}
                   </select>
                 </label>
               )}
               <label className="field maintenance-checkbox">
-                <input type="checkbox" name="recurrence_enabled" checked={scheduleValues.recurrence_enabled} onChange={updateScheduleValue} disabled={busy || isSupervisor} />
+                <input type="checkbox" name="recurrence_enabled" checked={scheduleValues.recurrence_enabled} onChange={updateScheduleValue}  />
                 Enable recurring maintenance
               </label>
               {scheduleValues.recurrence_enabled && (
@@ -837,7 +846,7 @@ const openEdit = (record) => {
                 </>
               )}
               <label className="field maintenance-form-wide">Description / work details
-                <textarea name="description" value={scheduleValues.description} onChange={updateScheduleValue} rows={3} maxLength={10000} disabled={busy || isSupervisor} />
+                <textarea name="description" value={scheduleValues.description} onChange={updateScheduleValue} rows={3} maxLength={10000} disabled={busy} />
               </label>
             </div>
             </fieldset>
@@ -1047,54 +1056,6 @@ const openEdit = (record) => {
         {dialog.record.notes || "No work details provided."}
       </div>
     </section>
-
-    <section className="maintenance-detail-section">
-      <h4>COMPLETION SUMMARY</h4>
-      <div className="maintenance-detail-grid">
-        <div className="maintenance-detail-field">
-          <span>Completion notes</span>
-          <strong>
-            {dialog.record.completion_notes || "—"}
-          </strong>
-        </div>
-        <div className="maintenance-detail-field">
-          <span>Parts used</span>
-          <strong>{dialog.record.parts_used || "—"}</strong>
-        </div>
-        <div className="maintenance-detail-field">
-          <span>Next maintenance</span>
-          <strong>{formatTime(dialog.record.next_due_at)}</strong>
-        </div>
-        <div className="maintenance-detail-field">
-          <span>Related alert</span>
-          <strong>{dialog.record.alert_id || "—"}</strong>
-        </div>
-      </div>
-
-      <div className="maintenance-detail-checklist">
-        <span>Checklist</span>
-        {dialog.record.checklist?.length ? (
-          <ul>
-            {dialog.record.checklist.map((item, index) => (
-              <li key={`${item.item}-${index}`}>
-                <span
-                  className={
-                    item.completed
-                      ? "maintenance-check-done"
-                      : "maintenance-check-pending"
-                  }
-                >
-                  {item.completed ? "✓" : "○"}
-                </span>
-                {item.item}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p>No checklist items available.</p>
-        )}
-      </div>
-    </section>
   </div>
 </div>
           <div className="modal-actions">
@@ -1138,21 +1099,23 @@ const openEdit = (record) => {
         </Modal>
       )}
 
-      {(dialog?.kind === "create" || dialog?.kind === "edit") && (
-        <Modal
-          title={dialog.kind === "create" ? "Add maintenance" : "Edit maintenance"}
-          onClose={() => { if (!busy) setDialog(null); }}
-          wide
-        >
+    {(dialog?.kind === "create" || dialog?.kind === "edit") && (
+  <Modal
+    title={dialog.kind === "create" ? "Add maintenance" : "Edit maintenance"}
+    onClose={() => {
+      if (!busy) setDialog(null);
+    }}
+    wide
+  >
           <form className="maintenance-form" onSubmit={save}>
             {error && <p className="notice error" role="alert">{error}</p>}
             <fieldset disabled={!canManageMaintenance} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
             <div className="maintenance-form-grid">
               <label className="field">Title <span className="req">*</span>
-                <input name="title" value={values.title} onChange={updateValue} required maxLength={200} disabled={busy || isSupervisor} />
+                <input name="title" value={values.title} onChange={updateValue} required maxLength={200} disabled={busy} />
               </label>
               <label className="field">Type <span className="req">*</span>
-                <select name="maintenance_type" value={values.maintenance_type} onChange={updateValue} required disabled={busy || isSupervisor}>
+                <select name="maintenance_type" value={values.maintenance_type} onChange={updateValue} required disabled={busy}>
                   {TYPES.map((item) => <option key={item} value={item}>{item[0].toUpperCase() + item.slice(1)}</option>)}
                 </select>
               </label>
@@ -1164,7 +1127,7 @@ const openEdit = (record) => {
     value={values.status}
     onChange={updateValue}
     required
-    disabled={busy || isSupervisor}
+    disabled={busy}
   >
     {STATUSES.map((item) => (
       <option key={item} value={item}>
@@ -1174,26 +1137,31 @@ const openEdit = (record) => {
   </select>
 </label>
               )}
-              <label className="field">Priority <span className="req">*</span>
-                <select name="priority" value={values.priority} onChange={updateValue} required disabled={busy}>
-                  {PRIORITIES.map((item) => (
-                    <option key={item} value={item}>
-                      {item[0].toUpperCase() + item.slice(1)}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              
+<label className="field">
+  Priority <span className="req">*</span>
+  <select
+    name="priority"
+    value={values.priority}
+    onChange={updateValue}
+    required
+    disabled={busy}
+  >
+    {PRIORITIES.map((item) => (
+      <option key={item} value={item}>
+        {item.charAt(0).toUpperCase() + item.slice(1)}
+      </option>
+    ))}
+  </select>
+</label>
               <label className="field">Planned start {plannedDatesRequired && <span className="req">*</span>}
-                <input type="datetime-local" name="planned_start_at" value={values.planned_start_at} onChange={updateValue} required={plannedDatesRequired} disabled={busy || isSupervisor} />
+                <input type="datetime-local" name="planned_start_at" value={values.planned_start_at} onChange={updateValue} required={plannedDatesRequired} disabled={busy} />
               </label>
               <label className="field">Planned end {plannedDatesRequired && <span className="req">*</span>}
-                <input type="datetime-local" name="planned_end_at" value={values.planned_end_at} onChange={updateValue} required={plannedDatesRequired} disabled={busy || isSupervisor} />
+                <input type="datetime-local" name="planned_end_at" value={values.planned_end_at} onChange={updateValue} required={plannedDatesRequired} disabled={busy}/>
               </label>
               <label className="field">Assigned technician
                 <input name="assigned_technician" value={values.assigned_technician} onChange={updateValue} maxLength={200} disabled={busy} />
-              </label>
-              <label className="field">Related alert ID
-                <input type="number" min="1" name="alert_id" value={values.alert_id} onChange={updateValue} disabled={busy || isSupervisor} />
               </label>
               <label className="field">Actual start
                 <input type="datetime-local" name="actual_started_at" value={values.actual_started_at} onChange={updateValue} disabled={busy} />
@@ -1201,20 +1169,8 @@ const openEdit = (record) => {
               <label className="field">Actual completion
                 <input type="datetime-local" name="actual_completed_at" value={values.actual_completed_at} onChange={updateValue} disabled={busy} />
               </label>
-              <label className="field">Next maintenance date
-                <input type="datetime-local" name="next_due_at" value={values.next_due_at} onChange={updateValue} disabled={busy} />
-              </label>
-              <label className="field">Parts replaced or used
-                <textarea name="parts_used" value={values.parts_used} onChange={updateValue} rows={2} disabled={busy} />
-              </label>
               <label className="field maintenance-form-wide">Description / work details
-                <textarea name="notes" value={values.notes} onChange={updateValue} rows={3} maxLength={10000} required={dialog.kind === "create"} disabled={busy} />
-              </label>
-              <label className="field maintenance-form-wide">Completion notes
-                <textarea name="completion_notes" value={values.completion_notes} onChange={updateValue} rows={3} disabled={busy} />
-              </label>
-              <label className="field maintenance-form-wide">Checklist (one item per line)
-                <textarea name="checklist" value={values.checklist} onChange={updateValue} rows={3} disabled={busy} />
+                <textarea name="notes" value={values.notes} onChange={updateValue} rows={3} maxLength={10000} required disabled={busy}/>
               </label>
             </div>
             </fieldset>

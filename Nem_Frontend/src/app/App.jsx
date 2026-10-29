@@ -146,6 +146,11 @@ export default function App() {
   element={<ExportConfigurationPage />}
 />
 
+<Route
+  path="/assets/:id/maintenance/:recordId/edit"
+  element={<CreateMaintenanceSchedulePage />}
+/>
+
 {/* Fallback — keep this last */}
 <Route path="*" element={<Home />} />
       </Route>

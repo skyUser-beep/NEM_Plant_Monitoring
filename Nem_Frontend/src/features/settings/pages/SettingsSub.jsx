@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { KeyRound } from "lucide-react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../../../services/api.js";
 import { formatTime } from "../../../utils/format.js";
@@ -6,6 +7,7 @@ import { useAuth } from "../../auth/AuthContext.jsx";
 import {
   CreateModal,
   EmptyState,
+  Modal,
   useConfirmation,
 } from "../../../components/common/UI.jsx";
 import { BackIcon, EditIcon } from "../../../components/common/Icons.jsx";
@@ -35,6 +37,12 @@ function UserInfo() {
   const [contactError, setContactError] = useState("");
   const [emailError, setEmailError] = useState("");
   const [saveMsg, setSaveMsg] = useState("");
+  const [passwordDialogOpen, setPasswordDialogOpen] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+  const [passwordBusy, setPasswordBusy] = useState(false);
   const canEdit = user?.role === "Administrator";
   useEffect(() => {
     let active = true;
@@ -103,6 +111,47 @@ function UserInfo() {
     }
   };
 
+  const closePasswordDialog = () => {
+    if (passwordBusy) return;
+    setPasswordDialogOpen(false);
+    setCurrentPassword("");
+    setNewPassword("");
+    setConfirmPassword("");
+    setPasswordError("");
+  };
+
+  const changePassword = async (event) => {
+    event.preventDefault();
+    setPasswordError("");
+    if (newPassword.length < 6) {
+      setPasswordError("New password must be at least 6 characters.");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError("New password and confirmation do not match.");
+      return;
+    }
+
+    setPasswordBusy(true);
+    try {
+      await api.post("/auth/change-password", {
+        current_password: currentPassword,
+        new_password: newPassword,
+      });
+      setPasswordDialogOpen(false);
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setSaveMsg("Password changed successfully.");
+    } catch (passwordChangeError) {
+      setPasswordError(
+        passwordChangeError.message || "Could not change the password."
+      );
+    } finally {
+      setPasswordBusy(false);
+    }
+  };
+
   return (
     <div className="panel-white profile">
       <div className="profile-head" style={{ position: "relative", display: "flex", alignItems: "center", gap: 12 }}>
@@ -140,6 +189,31 @@ function UserInfo() {
             <EditIcon size={14} aria-hidden="true" />
           </button>
         )}
+        <button
+          type="button"
+          onClick={() => {
+            setPasswordError("");
+            setPasswordDialogOpen(true);
+          }}
+          title="Change password"
+          aria-label="Change password"
+          className="btn-outline"
+          style={{
+            position: "absolute",
+            right: canEdit ? 52 : 12,
+            top: "50%",
+            transform: "translateY(-50%)",
+            height: "32px",
+            padding: "0 10px",
+            fontSize: "13px",
+            borderRadius: "4px",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <KeyRound size={14} aria-hidden="true" />
+        </button>
       </div>
 
     <dl className="profile-list">
@@ -207,6 +281,67 @@ function UserInfo() {
     {saveMsg && <span className="notice" role="status" style={{ marginLeft: 10 }}>{saveMsg}</span>}
   </div>
 ) : null}
+
+{passwordDialogOpen && (
+  <Modal title="Change password" onClose={closePasswordDialog}>
+    <form className="maintenance-form" onSubmit={changePassword}>
+      {passwordError && (
+        <p className="notice error" role="alert">{passwordError}</p>
+      )}
+      <label className="field">
+        Current password
+        <input
+          type="password"
+          autoComplete="current-password"
+          value={currentPassword}
+          onChange={(event) => setCurrentPassword(event.target.value)}
+          required
+          maxLength={1024}
+          disabled={passwordBusy}
+        />
+      </label>
+      <label className="field">
+        New password (minimum 6 characters)
+        <input
+          type="password"
+          autoComplete="new-password"
+          value={newPassword}
+          onChange={(event) => setNewPassword(event.target.value)}
+          required
+          minLength={6}
+          maxLength={1024}
+          disabled={passwordBusy}
+        />
+      </label>
+      <label className="field">
+        Confirm new password
+        <input
+          type="password"
+          autoComplete="new-password"
+          value={confirmPassword}
+          onChange={(event) => setConfirmPassword(event.target.value)}
+          required
+          minLength={6}
+          maxLength={1024}
+          disabled={passwordBusy}
+        />
+      </label>
+      <div className="modal-actions">
+        <button
+          type="button"
+          className="btn-outline"
+          onClick={closePasswordDialog}
+          disabled={passwordBusy}
+        >
+          Cancel
+        </button>
+        <button type="submit" className="btn-primary" disabled={passwordBusy}>
+          {passwordBusy ? "Changing…" : "Change password"}
+        </button>
+      </div>
+    </form>
+  </Modal>
+)}
 
 <p className="hint">
   Your name and role are taken from your signed-in account.

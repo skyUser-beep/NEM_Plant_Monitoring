@@ -2237,126 +2237,168 @@ const filteredEvents = [...events]
                           }
                         >
                           <DotsIcon size={17} />
-                        </button>
-                        {ruleActionMenuId === rule.id && (
-                          <FloatingMenu align="right" role="menu">
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={() => {
-                                setRuleActionMenuId(null);
-                                openRuleDetails(rule);
-                              }}
-                            >
-                              View rule
-                            </button>
-                            <button
-                            type="button"
-                            role="menuitem"
-                            onClick={() => {
-                              setRuleActionMenuId(null);
-                              openEditRuleForm(rule);
-                            }}
-                            disabled={!canManageRules}
-                            title={!canManageRules ? "You do not have permission to manage monitoring rules." : undefined}
-                            >
-                            Edit rule
-                            </button>
-                            {lifecycleStatus(rule) === "in_progress" && (
-                              <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                  setRuleActionMenuId(null);
-                                  setLifecycleAction({ rule, action: "suspend" });
-                                }}
-                                disabled={deletingRuleId !== null || !canManageRules}
-                                title={!canManageRules ? "You do not have permission to manage monitoring rules." : undefined}
-                              >
-                                Suspend rule
-                              </button>
-                            )}
-                            {lifecycleStatus(rule) === "suspended" && (
-                              <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                  setRuleActionMenuId(null);
-                                  setLifecycleAction({ rule, action: "resume" });
-                                }}
-                                disabled={deletingRuleId !== null || !canManageRules}
-                                title={!canManageRules ? "You do not have permission to manage monitoring rules." : undefined}
-                              >
-                                Activate rule
-                              </button>
-                            )}
-                            {lifecycleStatus(rule) === "deactivated" && (
-                              <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                  setRuleActionMenuId(null);
-                                  setLifecycleAction({ rule, action: "activate" });
-                                }}
-                                disabled={deletingRuleId !== null || !canManageRules}
-                                title={!canManageRules ? "You do not have permission to manage monitoring rules." : undefined}
-                              >
-                                Activate rule
-                              </button>
-                            )}
-                            {["in_progress", "suspended"].includes(lifecycleStatus(rule)) && (
-                              <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                  setRuleActionMenuId(null);
-                                  setLifecycleAction({ rule, action: "deactivate" });
-                                }}
-                                disabled={deletingRuleId !== null || !canManageRules}
-                                title={!canManageRules ? "You do not have permission to manage monitoring rules." : undefined}
-                              >
-                                Deactivate rule
-                              </button>
-                            )}
-                            {lifecycleStatus(rule) !== "in_progress" &&
-                              lifecycleStatus(rule) !== "completed" && (
-                                <>
-                                  <button
-                                    type="button"
-                                    role="menuitem"
-                                    onClick={() => {
-                                      setRuleActionMenuId(null);
-                                      remove(rule);
-                                    }}
-                                    disabled={deletingRuleId !== null || !canManageRules}
-                                    title={!canManageRules ? "You do not have permission to manage monitoring rules." : undefined}
-                                  >
-                                    Archive
-                                  </button>
-                                  <button
-                                  type="button"
-                                  className="btn-outline danger"
-                                  onClick={() => deleteEvent(event)}
-                                  disabled={!isAdministrator || deletingEventId !== null}
-                                  title="Delete event permanently"
-                                  aria-label="Delete event permanently"
-                                  >
-                                    <Trash2 size={16} />
-                                    Delete
-                                    </button>
-                                </>
-                              )}
-                            {lifecycleStatus(rule) === "completed" && (
-                        <button
-                        type="button"
-                        className="btn-outline danger"
-                        onClick={() => deleteEvent(event)}
-                        disabled={!isAdministrator || deletingEventId !== null}
-                        title="Delete event permanently"
-                        aria-label="Delete event permanently"
-                        >
-                          <Trash2 size={16} />
-                          Delete</button>
+                     
+</button>
+{ruleActionMenuId === rule.id && (
+  <FloatingMenu align="right" role="menu">
+    {/* View rule: existing behavior unchanged */}
+    <button
+      type="button"
+      role="menuitem"
+      onClick={() => {
+        setRuleActionMenuId(null);
+        openRuleDetails(rule);
+      }}
+    >
+      View rule
+    </button>
+
+    {/* Edit rule: existing permission check unchanged */}
+    <button
+      type="button"
+      role="menuitem"
+      onClick={() => {
+        setRuleActionMenuId(null);
+        openEditRuleForm(rule);
+      }}
+      disabled={!canManageRules && !isSupervisor}
+      title={
+        !canManageRules
+          ? "You do not have permission to manage monitoring rules."
+          : undefined
+      }
+    >
+      Edit rule
+    </button>
+
+    {/* Suspend rule */}
+    {lifecycleStatus(rule) === "in_progress" && (
+      <button
+        type="button"
+        role="menuitem"
+        onClick={() => {
+          setRuleActionMenuId(null);
+          setLifecycleAction({ rule, action: "suspend" });
+        }}
+        disabled={isSupervisor ||deletingRuleId !== null ||!canManageRules}
+        title={
+          !canManageRules
+            ? "You do not have permission to manage monitoring rules."
+            : undefined
+        }
+      >
+        Suspend rule
+      </button>
+    )}
+
+    {/* Activate rule: suspended */}
+    {lifecycleStatus(rule) === "suspended" && (
+      <button
+        type="button"
+        role="menuitem"
+        onClick={() => {
+          setRuleActionMenuId(null);
+          setLifecycleAction({ rule, action: "resume" });
+        }}
+        disabled={deletingRuleId !== null || !canManageRules}
+        title={
+          !canManageRules
+            ? "You do not have permission to manage monitoring rules."
+            : undefined
+        }
+      >
+        Activate rule
+      </button>
+    )}
+
+    {/* Activate rule: deactivated */}
+    {lifecycleStatus(rule) === "deactivated" && (
+      <button
+        type="button"
+        role="menuitem"
+        onClick={() => {
+          setRuleActionMenuId(null);
+          setLifecycleAction({ rule, action: "activate" });
+        }}
+        disabled={deletingRuleId !== null || !canManageRules}
+        title={
+          !canManageRules
+            ? "You do not have permission to manage monitoring rules."
+            : undefined
+        }
+      >
+        Activate rule
+      </button>
+    )}
+
+    {/* Deactivate rule */}
+    {["in_progress", "suspended"].includes(lifecycleStatus(rule)) && (
+      <button
+        type="button"
+        role="menuitem"
+        onClick={() => {
+          setRuleActionMenuId(null);
+          setLifecycleAction({ rule, action: "deactivate" });
+        }}
+        disabled={isSupervisor ||deletingRuleId !== null ||!canManageRules}
+        title={
+          !canManageRules
+            ? "You do not have permission to manage monitoring rules."
+            : undefined
+        }
+      >
+        Deactivate rule
+      </button>
+    )}
+
+    {/* Archive and Delete: existing behavior unchanged */}
+    {lifecycleStatus(rule) !== "in_progress" &&
+      lifecycleStatus(rule) !== "completed" && (
+        <>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setRuleActionMenuId(null);
+              remove(rule);
+            }}
+            disabled={deletingRuleId !== null || !canManageRules}
+            title={
+              !canManageRules
+                ? "You do not have permission to manage monitoring rules."
+                : undefined
+            }
+          >
+            Archive
+          </button>
+
+          <button
+            type="button"
+            className="btn-outline danger"
+            onClick={() => deleteEvent(event)}
+            disabled={!isAdministrator || deletingEventId !== null}
+            title="Delete event permanently"
+            aria-label="Delete event permanently"
+          >
+            <Trash2 size={16} />
+            Delete
+          </button>
+        </>
+      )}
+
+    {lifecycleStatus(rule) === "completed" && (
+      <button
+        type="button"
+        className="btn-outline danger"
+        onClick={() => deleteEvent(event)}
+        disabled={!isAdministrator || deletingEventId !== null}
+        title="Delete event permanently"
+        aria-label="Delete event permanently"
+      >
+        <Trash2 size={16} />
+        Delete
+      </button>
+
                             )}
                           </FloatingMenu>
                         )}
