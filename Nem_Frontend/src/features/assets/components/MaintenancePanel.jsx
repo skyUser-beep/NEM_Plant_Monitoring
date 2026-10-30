@@ -1,13 +1,16 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { FileText, Timer, Trash2 } from "lucide-react";
+import { Eye, FileText, Pencil, Timer, Trash2 } from "lucide-react";
 import { api } from "../../../services/api.js";
 import { useAuth } from "../../auth/AuthContext.jsx";
 import {
   EmptyState,
+  FloatingMenu,
   Modal,
   useConfirmation,
 } from "../../../components/common/UI.jsx";
+import { DotsIcon } from "../../../components/common/Icons.jsx";
+import { getAuthToken } from "../../../services/api.js";
 import { formatTime } from "../../../utils/format.js";
 import {
   LEGACY_RULE_CHOICES,
@@ -146,6 +149,7 @@ function validateForm(values, requirePlannedDates) {
 export default function MaintenancePanel({ assetId, onChanged }) {
   const confirm = useConfirmation();
   const { user } = useAuth();
+  const isAdministrator = user?.role === "Administrator";
   const isSupervisor = user?.role === "Supervisor";
   const canAddMaintenance = user?.role === "Administrator";
   const canManageMaintenance = ["Administrator", "Supervisor"].includes(user?.role);
@@ -160,6 +164,9 @@ export default function MaintenancePanel({ assetId, onChanged }) {
   const [notice, setNotice] = useState("");
   const [dialog, setDialog] = useState(null);
   const [materialViewer, setMaterialViewer] = useState(null);
+  const [materialError, setMaterialError] = useState("");
+  const [actionMenuRecordId, setActionMenuRecordId] = useState(null);
+  const actionMenuTriggerRef = useRef(null);
   const [legacyRuleOptionsOpen, setLegacyRuleOptionsOpen] = useState(false);
   const [values, setValues] = useState(() => formValues(null));
   const [scheduleValues, setScheduleValues] = useState({
@@ -179,7 +186,7 @@ export default function MaintenancePanel({ assetId, onChanged }) {
   const [clockNow, setClockNow] = useState(Date.now());
 
   const permanentlyDeleteRecord = async (record) => {
-    if (!canManageMaintenance || busy) return;
+    if (!isAdministrator || busy) return;
     const scheduled =
       Boolean(record.schedule_id) &&
       !(record.status === "completed" && record.archived_at);
@@ -227,7 +234,7 @@ export default function MaintenancePanel({ assetId, onChanged }) {
   };
 
   const permanentlyDeleteSchedule = async (schedule) => {
-    if (!canManageMaintenance || busy) return;
+    if (!isAdministrator || busy) return;
     const dueDate = schedule.current_due_date
       ? displayDate(schedule.current_due_date)
       : null;
@@ -304,6 +311,40 @@ export default function MaintenancePanel({ assetId, onChanged }) {
     const timer = window.setInterval(() => setClockNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [records]);
+
+  useEffect(() => {
+    const previewUrl = materialViewer?.previewUrl;
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [materialViewer?.previewUrl]);
+
+  useEffect(() => {
+    if (actionMenuRecordId === null) return undefined;
+
+    const handlePointerDown = (event) => {
+      if (!(event.target instanceof Element)) return;
+      if (
+        actionMenuTriggerRef.current?.contains(event.target) ||
+        event.target.closest("[data-maintenance-action-menu]")
+      ) {
+        return;
+      }
+      setActionMenuRecordId(null);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key !== "Escape") return;
+      setActionMenuRecordId(null);
+      actionMenuTriggerRef.current?.focus();
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [actionMenuRecordId]);
 
   useEffect(() => {
     if (!dialog || dialog.kind === "details") return;
@@ -440,7 +481,7 @@ const openEdit = (record) => {
       }
       return;
     }
-    if (!values.notes.trim()) {
+    if (!isSupervisor && !values.notes.trim()) {
   setError("Please enter notes for the maintenance job.");
   return;
 }
@@ -448,8 +489,11 @@ const openEdit = (record) => {
     const terminalRecord =
       dialog.kind === "edit" &&
       ["completed", "cancelled"].includes(dialog.record.status);
+    const validationValues = isSupervisor
+      ? { ...values, actual_started_at: "", actual_completed_at: "" }
+      : values;
     const validationError = validateForm(
-      values,
+      validationValues,
       dialog.kind === "create" || !terminalRecord
     );
     if (validationError) {
@@ -464,34 +508,34 @@ const openEdit = (record) => {
       .filter(Boolean)
       .map((item) => ({ item, completed: false }));
 
-    const payload = {
-      // Restricted fields: Administrator only
-      ...(!isSupervisor && {
+    const payload = isSupervisor
+      ? {
+          planned_start_at: nullableDate(values.planned_start_at),
+          planned_end_at: nullableDate(values.planned_end_at),
+        }
+      : {
         title: values.title.trim(),
         maintenance_type: values.maintenance_type,
         planned_start_at: nullableDate(values.planned_start_at),
         planned_end_at: nullableDate(values.planned_end_at),
-      }),
-
-      // Other maintenance fields
-      status: values.status,
-      priority: values.priority,
-      assigned_technician: values.assigned_technician.trim() || null,
-      actual_started_at: nullableDate(values.actual_started_at),
-      actual_completed_at:
-        nullableDate(values.actual_completed_at) ||
-        (dialog.kind === "create" && values.status === "completed"
-          ? new Date().toISOString()
-          : null),
-      notes: values.notes.trim(),
-      completion_notes: values.completion_notes.trim() || null,
-      parts_used: values.parts_used.trim() || null,
-      checklist: checklist.length ? checklist : null,
-      next_due_at: nullableDate(values.next_due_at),
-      ...(values.alert_id.trim()
-        ? { alert_id: Number(values.alert_id) }
-        : {}),
-    };
+        ...(dialog.kind === "create" ? { status: values.status } : {}),
+        priority: values.priority,
+        assigned_technician: values.assigned_technician.trim() || null,
+        actual_started_at: nullableDate(values.actual_started_at),
+        actual_completed_at:
+          nullableDate(values.actual_completed_at) ||
+          (dialog.kind === "create" && values.status === "completed"
+            ? new Date().toISOString()
+            : null),
+        notes: values.notes.trim(),
+        completion_notes: values.completion_notes.trim() || null,
+        parts_used: values.parts_used.trim() || null,
+        checklist: checklist.length ? checklist : null,
+        next_due_at: nullableDate(values.next_due_at),
+        ...(values.alert_id.trim()
+          ? { alert_id: Number(values.alert_id) }
+          : {}),
+      };
 
     console.log("Maintenance alert_id:", values.alert_id);
     console.log("Maintenance payload:", payload);
@@ -630,6 +674,52 @@ const openEdit = (record) => {
   const documentsForRecord = (record) =>
     schedules.find((schedule) => schedule.id === record.schedule_id)
       ?.instruction_documents || [];
+  const openMaterialFile = async (document, file, action) => {
+    setMaterialError("");
+    try {
+      const token = getAuthToken();
+      const response = await fetch(
+        `${API_BASE}/documents/${document.id}/files/${file.id}/${action}`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      );
+      if (!response.ok) {
+        let message = `Could not ${action === "view" ? "open" : "download"} ${file.name} (${response.status}).`;
+        const responseText = await response.text();
+        if (responseText) {
+          try {
+            const body = JSON.parse(responseText);
+            message = body.detail || message;
+          } catch {
+            message = responseText;
+          }
+        }
+        throw new Error(message);
+      }
+
+      const objectUrl = URL.createObjectURL(await response.blob());
+      if (action === "view") {
+        setMaterialViewer((current) => ({
+          ...current,
+          document,
+          file,
+          previewUrl: objectUrl,
+        }));
+        return;
+      }
+
+      const downloadLink = window.document.createElement("a");
+      downloadLink.href = objectUrl;
+      downloadLink.download = file.name;
+      window.document.body.appendChild(downloadLink);
+      downloadLink.click();
+      downloadLink.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    } catch (requestError) {
+      setMaterialError(
+        requestError.message || `Could not ${action} ${file.name}.`
+      );
+    }
+  };
   const today = todayDateInput();
   const visibleRecords = records.filter(
     (record) =>
@@ -686,48 +776,100 @@ const openEdit = (record) => {
       <div className="maintenance-actions">
         <button
           type="button"
-          className="btn-outline"
-          onClick={() => setDialog({ kind: "details", record })}
+          ref={actionMenuRecordId === record.id ? actionMenuTriggerRef : null}
+          className="icon-outline sm maintenance-actions-trigger"
+          title={`Maintenance actions for ${record.title}`}
+          aria-label={`Maintenance actions for ${record.title}`}
+          aria-haspopup="menu"
+          aria-expanded={actionMenuRecordId === record.id}
           disabled={busy}
-        >
-          View
-        </button>
-        <button
-          type="button"
-          className="btn-outline"
-          onClick={() => {
-            const documents = documentsForRecord(record);
-            if (documents.length > 0) {
-              setMaterialViewer({
-                document: documents[0],
-                file: null,
-                documents,
-              });
-            }
-          }}
-          disabled={busy || documentsForRecord(record).length === 0}
-          title={
-            documentsForRecord(record).length > 0
-              ? "View attached instructions and documents"
-              : "No instruction or document attached"
+          onClick={() =>
+            setActionMenuRecordId((current) =>
+              current === record.id ? null : record.id
+            )
           }
         >
-          <FileText size={14} aria-hidden="true" />
-          Materials
+          <DotsIcon size={17} />
         </button>
-        {record.status !== "in_progress" && (
-          <button
-            type="button"
-            className="maintenance-delete-icon"
-            title={!canManageMaintenance
-              ? "You do not have permission to change maintenance records."
-              : record.schedule_id ? "Permanently delete schedule" : "Permanently delete maintenance"}
-            aria-label={`Permanently delete ${record.schedule_id ? "schedule" : "maintenance"} ${record.title}`}
-            onClick={() => permanentlyDeleteRecord(record)}
-            disabled={busy || !canManageMaintenance}
+        {actionMenuRecordId === record.id && (
+          <FloatingMenu
+            align="right"
+            role="menu"
+            data-maintenance-action-menu=""
           >
-            <Trash2 size={16} aria-hidden="true" />
-          </button>
+            <button
+              type="button"
+              className="maintenance-action-menu-item"
+              role="menuitem"
+              onClick={() => {
+                setActionMenuRecordId(null);
+                setDialog({ kind: "details", record });
+              }}
+            >
+              <Eye size={16} aria-hidden="true" />
+              <span>View maintenance</span>
+            </button>
+            <button
+              type="button"
+              className="maintenance-action-menu-item maintenance-action-menu-item--edit"
+              role="menuitem"
+              onClick={() => {
+                setActionMenuRecordId(null);
+                openEdit(record);
+              }}
+              disabled={!canManageMaintenance}
+              title={!canManageMaintenance ? "You do not have permission to edit maintenance records." : undefined}
+            >
+              <Pencil size={16} aria-hidden="true" />
+              <span>Edit maintenance</span>
+            </button>
+            <button
+              type="button"
+              className="maintenance-action-menu-item"
+              role="menuitem"
+              onClick={() => {
+                setActionMenuRecordId(null);
+                setMaterialError("");
+                const documents = documentsForRecord(record);
+                if (documents.length > 0) {
+                  setMaterialViewer({
+                    document: documents[0],
+                    file: null,
+                    documents,
+                  });
+                }
+              }}
+              disabled={busy || documentsForRecord(record).length === 0}
+              title={
+                documentsForRecord(record).length > 0
+                  ? "View attached instructions and documents"
+                  : "No instruction or document attached"
+              }
+            >
+              <FileText size={16} aria-hidden="true" />
+              <span>Materials</span>
+            </button>
+            {isAdministrator && (
+            <button
+              type="button"
+              className="maintenance-action-menu-item maintenance-action-menu-item--delete"
+              role="menuitem"
+              onClick={() => {
+                setActionMenuRecordId(null);
+                permanentlyDeleteRecord(record);
+              }}
+              disabled={busy || record.status === "in_progress"}
+              title={record.status === "in_progress"
+                ? "In-progress maintenance cannot be deleted."
+                : record.schedule_id
+                  ? "Permanently delete schedule"
+                  : "Permanently delete maintenance"}
+            >
+              <Trash2 size={16} aria-hidden="true" />
+              <span>Delete maintenance</span>
+            </button>
+            )}
+          </FloatingMenu>
         )}
       </div>
     </article>
@@ -891,18 +1033,27 @@ const openEdit = (record) => {
               <button
                 type="button"
                 className="btn-outline"
-                onClick={() => setMaterialViewer((current) => ({ ...current, file: null }))}
+                onClick={() => {
+                  setMaterialError("");
+                  setMaterialViewer((current) => ({
+                    ...current,
+                    file: null,
+                    previewUrl: null,
+                  }));
+                }}
               >
                 Back to instructions and documents
               </button>
+              {materialError && <p className="notice error" role="alert">{materialError}</p>}
               <iframe
                 title={materialViewer.file.name}
-                src={`${API_BASE}/documents/${materialViewer.document.id}/files/${materialViewer.file.id}/view`}
+                src={materialViewer.previewUrl || undefined}
                 className="maintenance-document-preview"
               />
             </>
           ) : (
             <div className="maintenance-material-list">
+              {materialError && <p className="notice error" role="alert">{materialError}</p>}
               {materialViewer.documents.map((document) => (
                 <section key={document.id} className="maintenance-material-item">
                   <h3>{document.title || "Untitled document"}</h3>
@@ -911,14 +1062,22 @@ const openEdit = (record) => {
                   {document.files?.length > 0 ? (
                     <div className="maintenance-material-files">
                       {document.files.map((file) => (
-                        <button
-                          key={file.id}
-                          type="button"
-                          className="btn-outline"
-                          onClick={() => setMaterialViewer({ ...materialViewer, document, file })}
-                        >
-                          View {file.name}
-                        </button>
+                        <div key={file.id} className="maintenance-material-files">
+                          <button
+                            type="button"
+                            className="btn-outline"
+                            onClick={() => openMaterialFile(document, file, "view")}
+                          >
+                            View {file.name}
+                          </button>
+                          <button
+                            type="button"
+                            className="btn-outline"
+                            onClick={() => openMaterialFile(document, file, "download")}
+                          >
+                            Download
+                          </button>
+                        </div>
                       ))}
                     </div>
                   ) : (
@@ -1111,6 +1270,8 @@ const openEdit = (record) => {
             {error && <p className="notice error" role="alert">{error}</p>}
             <fieldset disabled={!canManageMaintenance} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
             <div className="maintenance-form-grid">
+              {!isSupervisor && (
+                <>
               <label className="field">Title <span className="req">*</span>
                 <input name="title" value={values.title} onChange={updateValue} required maxLength={200} disabled={busy} />
               </label>
@@ -1137,7 +1298,7 @@ const openEdit = (record) => {
   </select>
 </label>
               )}
-              
+
 <label className="field">
   Priority <span className="req">*</span>
   <select
@@ -1154,12 +1315,16 @@ const openEdit = (record) => {
     ))}
   </select>
 </label>
+                </>
+              )}
               <label className="field">Planned start {plannedDatesRequired && <span className="req">*</span>}
                 <input type="datetime-local" name="planned_start_at" value={values.planned_start_at} onChange={updateValue} required={plannedDatesRequired} disabled={busy} />
               </label>
               <label className="field">Planned end {plannedDatesRequired && <span className="req">*</span>}
                 <input type="datetime-local" name="planned_end_at" value={values.planned_end_at} onChange={updateValue} required={plannedDatesRequired} disabled={busy}/>
               </label>
+              {!isSupervisor && (
+                <>
               <label className="field">Assigned technician
                 <input name="assigned_technician" value={values.assigned_technician} onChange={updateValue} maxLength={200} disabled={busy} />
               </label>
@@ -1172,6 +1337,8 @@ const openEdit = (record) => {
               <label className="field maintenance-form-wide">Description / work details
                 <textarea name="notes" value={values.notes} onChange={updateValue} rows={3} maxLength={10000} required disabled={busy}/>
               </label>
+                </>
+              )}
             </div>
             </fieldset>
             <div className="modal-actions">

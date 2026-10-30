@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 from html import escape
 import json
+import mimetypes
 from pathlib import Path
 from uuid import uuid4
 from zipfile import BadZipFile
@@ -55,6 +56,7 @@ from app.api.routes.rules import (
     validate_targets,
 )
 from app.api.routes.monitoring import state_for_rule
+from app.api.routes.auth import get_current_user, require_roles
 
 router = APIRouter(tags=["frontend compatibility"])
 
@@ -1429,7 +1431,11 @@ def deactivate_rule(
 
 #Deleting a rule(Soft deletion,also called archiving rather than deleting the db row)
 @router.delete("/rules/{rule_id}", status_code=204)
-def frontend_delete_rule(rule_id: int, session: Session = Depends(get_db)) -> None:
+def frontend_delete_rule(
+    rule_id: int,
+    session: Session = Depends(get_db),
+    user: User = Depends(require_roles("Administrator")),
+) -> None:
     rule = session.get(MonitoringRule, rule_id)
     if rule is None or rule.is_archived:
         raise HTTPException(status_code=404, detail=f"Rule {rule_id} was not found")
@@ -1455,6 +1461,7 @@ def frontend_delete_rule(rule_id: int, session: Session = Depends(get_db)) -> No
 def frontend_hard_delete_rule(
     rule_id: int,
     session: Session = Depends(get_db),
+    user: User = Depends(require_roles("Administrator")),
 ) -> None:
     rule = session.scalar(
         select(MonitoringRule)
@@ -1847,11 +1854,35 @@ async def create_document_with_files(
             await upload.close()
 
 
+def _stored_instruction_file_path(attachment: InstructionDocumentFile) -> Path:
+    stored_name = attachment.stored_name
+    if (
+        not stored_name
+        or stored_name in {".", ".."}
+        or "/" in stored_name
+        or "\\" in stored_name
+        or Path(stored_name).is_absolute()
+        or bool(Path(stored_name).drive)
+        or Path(stored_name).name != stored_name
+    ):
+        raise HTTPException(status_code=404, detail="Stored file is missing")
+
+    upload_root = UPLOAD_DIR.resolve()
+    try:
+        path = (upload_root / stored_name).resolve(strict=True)
+    except (OSError, RuntimeError, ValueError) as error:
+        raise HTTPException(status_code=404, detail="Stored file is missing") from error
+    if path.parent != upload_root or not path.is_file():
+        raise HTTPException(status_code=404, detail="Stored file is missing")
+    return path
+
+
 @router.get("/documents/{document_id}/files/{file_id}/view")
 def view_document_file(
     document_id: int,
     file_id: int,
     session: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     attachment = session.scalar(
         select(InstructionDocumentFile).where(
@@ -1861,9 +1892,7 @@ def view_document_file(
     )
     if attachment is None:
         raise HTTPException(status_code=404, detail="Document attachment was not found")
-    path = UPLOAD_DIR / attachment.stored_name
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="Stored file is missing")
+    path = _stored_instruction_file_path(attachment)
 
     extension = Path(attachment.original_name).suffix.lower()
     if extension == ".docx":
@@ -1892,12 +1921,14 @@ def view_document_file(
             "<style>body{font:16px/1.6 system-ui,sans-serif;max-width:900px;"
             "margin:32px auto;padding:0 20px;color:#20242a}table{border-collapse:collapse}"
             "td{border:1px solid #aaa;padding:6px 10px}</style></head>"
-            f"<body>{paragraphs}{tables}</body></html>"
+            f"<body>{paragraphs}{tables}</body></html>",
+            headers={"Content-Disposition": "inline"},
         )
     if extension == ".doc":
         return HTMLResponse(
             "<!doctype html><html><body><p>This legacy .doc file cannot be previewed "
-            "in the browser. Please upload a PDF or DOCX copy to view it here.</p></body></html>"
+            "in the browser. Please download the file to open it.</p></body></html>",
+            headers={"Content-Disposition": "inline"},
         )
     if extension == ".txt":
         return FileResponse(
@@ -1917,17 +1948,26 @@ def view_document_file(
 
 
 @router.get("/documents/{document_id}/files/{file_id}/download")
-def download_document_file(document_id: int, file_id: int, session: Session = Depends(get_db)):
+def download_document_file(
+    document_id: int,
+    file_id: int,
+    session: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
     attachment = session.scalar(select(InstructionDocumentFile).where(
         InstructionDocumentFile.id == file_id,
         InstructionDocumentFile.document_id == document_id,
     ))
     if attachment is None:
         raise HTTPException(status_code=404, detail="Document attachment was not found")
-    path = UPLOAD_DIR / attachment.stored_name
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="Stored file is missing")
-    return FileResponse(path, filename=attachment.original_name, media_type=attachment.content_type or "application/octet-stream")
+    path = _stored_instruction_file_path(attachment)
+    media_type, _ = mimetypes.guess_type(attachment.original_name)
+    return FileResponse(
+        path,
+        filename=attachment.original_name,
+        media_type=media_type or "application/octet-stream",
+        content_disposition_type="attachment",
+    )
 
 
 #Delete a document
@@ -1982,9 +2022,7 @@ def import_configuration(
             is_mapping_bypass_enabled(request),
         )
         rule_data = data.model_dump()
-        rule_data["lifecycle_status"] = (
-            "in_progress" if data.is_enabled else "deactivated"
-        )
+        rule_data["lifecycle_status"] = ("in_progress" if data.is_enabled else "deactivated")
         session.add(MonitoringRule(**rule_data))
     session.commit()
     return {"rules": len(rules), "collections": created}
@@ -2096,7 +2134,5 @@ def restore_frontend_backup(
     record = session.get(BackupRecord, backup_id)
     if record is None:
         raise HTTPException(status_code=404, detail="Backup was not found")
-    restore_backup(
-        session, request.app.state.engine, request.app.state.settings, record.file_name
-    )
+    restore_backup(session, request.app.state.engine, request.app.state.settings, record.file_name)
     return {"status": "restored", "name": record.name}

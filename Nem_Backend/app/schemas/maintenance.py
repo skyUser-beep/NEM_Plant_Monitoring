@@ -2,7 +2,7 @@
 
 from datetime import date, datetime, timezone
 from typing import Any, Literal #restrict a field to specific permitted values
-from pydantic import Field, field_validator, model_validator 
+from pydantic import ConfigDict, Field, field_validator, model_validator
 from app.schemas.common import ORMModel
 
 #Creates an individual maintenance record
@@ -111,6 +111,8 @@ class MaintenanceRead(ORMModel):
 
 #Defines which maintenance record fields can be updated,editing a job
 class MaintenanceUpdate(ORMModel):
+    model_config = ConfigDict(extra="forbid")
+
     alert_id: int | None = Field(default=None, gt=0)
     title: str | None = Field(default=None, min_length=1, max_length=200)
     maintenance_type: Literal["preventive", "corrective", "inspection", "unplanned"] | None = None
@@ -188,6 +190,8 @@ class MaintenanceScheduleCreate(ORMModel):
 
 #Updates an existing schedule, modifying an existing schedule.
 class MaintenanceScheduleUpdate(ORMModel):
+    model_config = ConfigDict(extra="forbid")
+
     title: str | None = Field(default=None, min_length=1, max_length=200)
     maintenance_type: Literal["preventive", "corrective", "inspection", "unplanned"] | None = None
     priority: Literal["low", "medium", "high", "critical"] | None = None

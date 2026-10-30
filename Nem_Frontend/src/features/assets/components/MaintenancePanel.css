@@ -635,6 +635,60 @@
   white-space: nowrap;
 }
 
+.asset-page .maintenance-panel .maintenance-actions .maintenance-actions-trigger {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+}
+
+.floating-menu[data-maintenance-action-menu] {
+  min-width: min(190px, calc(100vw - 16px));
+}
+
+.floating-menu[data-maintenance-action-menu] .maintenance-action-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 11px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+
+.floating-menu[data-maintenance-action-menu] .maintenance-action-menu-item + .maintenance-action-menu-item {
+  margin-top: 2px;
+}
+
+.floating-menu[data-maintenance-action-menu] .maintenance-action-menu-item svg {
+  flex: 0 0 auto;
+}
+
+.floating-menu[data-maintenance-action-menu] .maintenance-action-menu-item:hover:not(:disabled),
+.floating-menu[data-maintenance-action-menu] .maintenance-action-menu-item:focus-visible {
+  background: var(--surface-hover, rgba(120, 145, 175, 0.1));
+}
+
+.floating-menu[data-maintenance-action-menu] .maintenance-action-menu-item--edit,
+.floating-menu[data-maintenance-action-menu] .maintenance-action-menu-item--edit:hover:not(:disabled),
+.floating-menu[data-maintenance-action-menu] .maintenance-action-menu-item--edit:focus-visible {
+  color: var(--action);
+}
+
+.floating-menu[data-maintenance-action-menu] .maintenance-action-menu-item--delete {
+  color: var(--alert);
+}
+
+.floating-menu[data-maintenance-action-menu] .maintenance-action-menu-item--delete:hover:not(:disabled),
+.floating-menu[data-maintenance-action-menu] .maintenance-action-menu-item--delete:focus-visible {
+  background: var(--alert-soft);
+  color: var(--alert);
+}
+
 @media (max-width: 900px) {
   .asset-page .maintenance-panel .maintenance-record-card {
     grid-template-columns: 4px minmax(0, 1fr) minmax(150px, 0.9fr) auto;

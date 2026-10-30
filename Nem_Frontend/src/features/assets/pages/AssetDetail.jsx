@@ -1,7 +1,7 @@
 ﻿
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
-import { Download, Trash2 } from "lucide-react";
+import { Download, Eye, Pencil, Trash2 } from "lucide-react";
 import CopyRulesModal from "../components/CopyRulesModal.jsx";
 import PredefinedRulesModal from "../../rules/components/PredefinedRulesModal.jsx";
 import { api } from "../../../services/api.js";
@@ -577,6 +577,9 @@ export default function AssetDetail() {
 
   const assetId = Number(id);
   const asset = assets.find((a) => a.id === assetId);
+  const hasChildren = asset
+    ? assets.some((candidate) => candidate.parent_asset_id === asset.id)
+    : false;
 
   const [tab, setTab] = useState(
     location.state?.activeTab === "logbook" ? "logbook" : "status"
@@ -657,6 +660,7 @@ export default function AssetDetail() {
         ".asset-page .dropdown[data-menu-open='true']"
       );
       if (event.target.closest(".floating-menu")) return;
+      if (event.target.closest(".logbook-action-menu-trigger")) return;
       if (![...openDropdowns].some((dropdown) => dropdown.contains(event.target))) {
         closeMenus();
       }
@@ -869,13 +873,15 @@ export default function AssetDetail() {
     ) {
       return;
     }
+    setActionNotice("");
     setDeletingEventId(event.id);
     setEventDeleteError("");
     try {
       await api.del(`/events/${event.id}`);
-      setEvents((current) => current.filter((item) => item.id !== event.id));
+      await loadEvents();
       setShowEventDetails(false);
       setSelectedEvent(null);
+      setActionNotice("Event was permanently deleted.");
     } catch (error) {
       setEventDeleteError(error.message || "Could not delete this event.");
     } finally {
@@ -1290,7 +1296,7 @@ const filteredEvents = [...events]
   };
 
   const remove = async (rule) => {
-    if (!canManageRules) return;
+    if (!isAdministrator) return;
     if (
       !(await confirm(
         `Archive the rule “${rule.name}”? It will be hidden from the rule list, and its alert and evaluation history will be retained.`,
@@ -1314,24 +1320,19 @@ const filteredEvents = [...events]
 
   const permanentlyDeleteRule = async (rule) => {
     if (!isAdministrator || permanentDeleteRequest.current) return;
-    if (
-      !(await confirm(
+    permanentDeleteRequest.current = true;
+    setDeletingRuleId(rule.id);
+    setLoadError("");
+    setActionNotice("");
+    try {
+      if (!(await confirm(
         `Permanently delete “${rule.name}”? This irreversibly removes the rule, its alerts, and its evaluation history. Maintenance records linked to its alerts must be removed first.`,
         {
           title: "Permanently delete rule",
           confirmLabel: "Delete permanently",
           destructive: true,
         }
-      ))
-    ) {
-      return;
-    }
-
-    permanentDeleteRequest.current = true;
-    setDeletingRuleId(rule.id);
-    setLoadError("");
-    setActionNotice("");
-    try {
+      ))) return;
       await api.del(`/rules/${rule.id}/permanent`);
       await refreshAll();
       setActionNotice(`Rule “${rule.name}” was permanently deleted.`);
@@ -1575,12 +1576,14 @@ const filteredEvents = [...events]
       return;
     }
 
+    setActionNotice("");
     setDeletingLogId(entry.id);
     setLoadError("");
     try {
       await api.del(`/maintenance/${entry.id}/permanent`);
       await loadLogs();
       await refreshStatus?.();
+      setActionNotice("Maintenance log entry was permanently deleted.");
     } catch (error) {
       setLoadError(error.message || "Could not permanently delete this maintenance entry.");
     } finally {
@@ -1768,7 +1771,9 @@ const filteredEvents = [...events]
               </span>
             )}
           </div>
-          {isAdministrator && <AssetSupervisors assetId={asset.id} />}
+          {isAdministrator && hasChildren && (
+            <AssetSupervisors assetId={asset.id} />
+          )}
         </div>
 
         <div className="asset-links">
@@ -1882,7 +1887,7 @@ const filteredEvents = [...events]
             </div>
 
             <button
-              className="icon-outline sm"
+              className="icon-outline sm logbook-action-menu-trigger"
               onClick={refreshAll}
               title="Refresh"
               aria-label="Refresh"
@@ -1968,7 +1973,7 @@ const filteredEvents = [...events]
 
             <div className="dropdown" data-menu-open={menu}>
               <button
-                className="icon-outline sm"
+                className="icon-outline sm logbook-action-menu-trigger"
                 onClick={() => setMenu(!menu)}
                 title="Rule actions"
                 aria-label="Rule actions"
@@ -2241,21 +2246,22 @@ const filteredEvents = [...events]
 </button>
 {ruleActionMenuId === rule.id && (
   <FloatingMenu align="right" role="menu">
-    {/* View rule: existing behavior unchanged */}
     <button
       type="button"
+      className="rule-action-menu-item rule-action-menu-item--view"
       role="menuitem"
       onClick={() => {
         setRuleActionMenuId(null);
         openRuleDetails(rule);
       }}
     >
-      View rule
+      <Eye size={16} aria-hidden="true" />
+      <span>View rule</span>
     </button>
 
-    {/* Edit rule: existing permission check unchanged */}
     <button
       type="button"
+      className="rule-action-menu-item rule-action-menu-item--edit"
       role="menuitem"
       onClick={() => {
         setRuleActionMenuId(null);
@@ -2268,13 +2274,15 @@ const filteredEvents = [...events]
           : undefined
       }
     >
-      Edit rule
+      <Pencil size={16} aria-hidden="true" />
+      <span>Edit rule</span>
     </button>
 
     {/* Suspend rule */}
     {lifecycleStatus(rule) === "in_progress" && (
       <button
         type="button"
+        className="rule-action-menu-item rule-action-menu-item--lifecycle"
         role="menuitem"
         onClick={() => {
           setRuleActionMenuId(null);
@@ -2295,15 +2303,16 @@ const filteredEvents = [...events]
     {lifecycleStatus(rule) === "suspended" && (
       <button
         type="button"
+        className="rule-action-menu-item rule-action-menu-item--lifecycle"
         role="menuitem"
         onClick={() => {
           setRuleActionMenuId(null);
           setLifecycleAction({ rule, action: "resume" });
         }}
-        disabled={deletingRuleId !== null || !canManageRules}
+        disabled={deletingRuleId !== null || !isAdministrator}
         title={
-          !canManageRules
-            ? "You do not have permission to manage monitoring rules."
+          !isAdministrator
+            ? "Only Administrators can archive rules."
             : undefined
         }
       >
@@ -2315,6 +2324,7 @@ const filteredEvents = [...events]
     {lifecycleStatus(rule) === "deactivated" && (
       <button
         type="button"
+        className="rule-action-menu-item rule-action-menu-item--lifecycle"
         role="menuitem"
         onClick={() => {
           setRuleActionMenuId(null);
@@ -2335,6 +2345,7 @@ const filteredEvents = [...events]
     {["in_progress", "suspended"].includes(lifecycleStatus(rule)) && (
       <button
         type="button"
+        className="rule-action-menu-item rule-action-menu-item--lifecycle"
         role="menuitem"
         onClick={() => {
           setRuleActionMenuId(null);
@@ -2351,55 +2362,44 @@ const filteredEvents = [...events]
       </button>
     )}
 
-    {/* Archive and Delete: existing behavior unchanged */}
+    {/* Archive */}
     {lifecycleStatus(rule) !== "in_progress" &&
       lifecycleStatus(rule) !== "completed" && (
-        <>
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => {
-              setRuleActionMenuId(null);
-              remove(rule);
-            }}
-            disabled={deletingRuleId !== null || !canManageRules}
-            title={
-              !canManageRules
-                ? "You do not have permission to manage monitoring rules."
-                : undefined
-            }
-          >
-            Archive
-          </button>
-
-          <button
-            type="button"
-            className="btn-outline danger"
-            onClick={() => deleteEvent(event)}
-            disabled={!isAdministrator || deletingEventId !== null}
-            title="Delete event permanently"
-            aria-label="Delete event permanently"
-          >
-            <Trash2 size={16} />
-            Delete
-          </button>
-        </>
+        <button
+          type="button"
+          className="rule-action-menu-item rule-action-menu-item--lifecycle"
+          role="menuitem"
+          onClick={() => {
+            setRuleActionMenuId(null);
+            remove(rule);
+          }}
+          disabled={deletingRuleId !== null || !canManageRules}
+          title={
+            !canManageRules
+              ? "You do not have permission to manage monitoring rules."
+              : undefined
+          }
+        >
+          Archive
+        </button>
       )}
 
-    {lifecycleStatus(rule) === "completed" && (
+    {lifecycleStatus(rule) !== "in_progress" && (
       <button
         type="button"
-        className="btn-outline danger"
-        onClick={() => deleteEvent(event)}
-        disabled={!isAdministrator || deletingEventId !== null}
-        title="Delete event permanently"
-        aria-label="Delete event permanently"
+        className="rule-action-menu-item rule-action-menu-item--delete"
+        role="menuitem"
+        onClick={() => {
+          setRuleActionMenuId(null);
+          permanentlyDeleteRule(rule);
+        }}
+        disabled={!isAdministrator || deletingRuleId !== null}
+        title={!isAdministrator ? "Only Administrators can permanently delete rules." : "Permanently delete rule"}
       >
-        <Trash2 size={16} />
-        Delete
+        <Trash2 size={16} aria-hidden="true" />
+        <span>{deletingRuleId === rule.id ? "Deleting…" : "Delete rule"}</span>
       </button>
-
-                            )}
+    )}
                           </FloatingMenu>
                         )}
                       </div>
@@ -2563,25 +2563,53 @@ const filteredEvents = [...events]
                   <div className="maintenance-actions">
                     <button
                       type="button"
-                      className="btn-outline"
+                      className="icon-outline sm"
+                      aria-label={`Maintenance logbook actions for ${entry.title || entry.summary || entry.id}`}
+                      aria-haspopup="menu"
+                      aria-expanded={ruleActionMenuId === `maintenance-log-${entry.id}`}
                       onClick={() => {
-                        setSelectedEntry(entry);
-                        setModal("view");
+                        const menuId = `maintenance-log-${entry.id}`;
+                        setRuleActionMenuId((current) =>
+                          current === menuId ? null : menuId
+                        );
                       }}
                       disabled={deletingLogId !== null}
                     >
-                      View
+                      <DotsIcon size={17} />
                     </button>
-                    <button
-                      type="button"
-                      className="maintenance-delete-icon"
-                      title="Permanently delete maintenance log entry"
-                      aria-label={`Permanently delete maintenance log entry ${entry.title || entry.summary || entry.id}`}
-                      onClick={() => deleteLogEntry(entry)}
-                      disabled={deletingLogId !== null || !isAdministrator}
-                    >
-                      <Trash2 size={16} aria-hidden="true" />
-                    </button>
+                    {ruleActionMenuId === `maintenance-log-${entry.id}` && (
+                      <FloatingMenu align="right" role="menu">
+                        <button
+                          type="button"
+                          className="rule-action-menu-item rule-action-menu-item--view"
+                          role="menuitem"
+                          onClick={() => {
+                            setRuleActionMenuId(null);
+                            setSelectedEntry(entry);
+                            setModal("view");
+                          }}
+                        >
+                          <Eye size={16} aria-hidden="true" />
+                          <span>View</span>
+                        </button>
+                        {isAdministrator && (
+                          <button
+                            type="button"
+                            className="rule-action-menu-item rule-action-menu-item--delete"
+                            role="menuitem"
+                            title="Permanently delete maintenance log entry"
+                            onClick={() => {
+                              setRuleActionMenuId(null);
+                              deleteLogEntry(entry);
+                            }}
+                            disabled={deletingLogId !== null}
+                          >
+                            <Trash2 size={16} aria-hidden="true" />
+                            <span>Delete</span>
+                          </button>
+                        )}
+                      </FloatingMenu>
+                    )}
                   </div>
                 </td>
               </tr>
@@ -2765,25 +2793,54 @@ const filteredEvents = [...events]
                     <div className="event-row-actions">
                       <button
                         type="button"
-                        className="btn-secondary"
+                        className="icon-outline sm"
+                        aria-label={`Event log actions for ${eventActionLabel(event.event_type)}`}
+                        aria-haspopup="menu"
+                        aria-expanded={ruleActionMenuId === `event-log-${event.id}`}
                         onClick={() => {
-                          setEventDeleteError("");
-                          setSelectedEvent(event);
-                          setShowEventDetails(true);
+                          const menuId = `event-log-${event.id}`;
+                          setRuleActionMenuId((current) =>
+                            current === menuId ? null : menuId
+                          );
                         }}
                       >
-                        View
+                        <DotsIcon size={17} />
                       </button>
-                      <button
-                        type="button"
-                        className="event-delete-icon"
-                        title={!isAdministrator ? "Administrator access required to delete events." : "Permanently delete event"}
-                        aria-label={`Permanently delete ${eventActionLabel(event.event_type)} event`}
-                        disabled={deletingEventId !== null || !isAdministrator}
-                        onClick={() => deleteEvent(event)}
-                      >
-                        <Trash2 size={16} aria-hidden="true" />
-                      </button>
+                      {ruleActionMenuId === `event-log-${event.id}` && (
+                        <FloatingMenu align="right" role="menu">
+                          <button
+                            type="button"
+                            className="rule-action-menu-item rule-action-menu-item--view"
+                            role="menuitem"
+                            onClick={() => {
+                              setRuleActionMenuId(null);
+                              setEventDeleteError("");
+                              setSelectedEvent(event);
+                              setShowEventDetails(true);
+                            }}
+                          >
+                            <Eye size={16} aria-hidden="true" />
+                            <span>View</span>
+                          </button>
+                          {isAdministrator && (
+                            <button
+                              type="button"
+                              className="rule-action-menu-item rule-action-menu-item--delete"
+                              role="menuitem"
+                              title="Permanently delete event"
+                              aria-label={`Permanently delete ${eventActionLabel(event.event_type)} event`}
+                              disabled={deletingEventId !== null}
+                              onClick={() => {
+                                setRuleActionMenuId(null);
+                                deleteEvent(event);
+                              }}
+                            >
+                              <Trash2 size={16} aria-hidden="true" />
+                              <span>Delete</span>
+                            </button>
+                          )}
+                        </FloatingMenu>
+                      )}
                     </div>
                   </td>
                 </tr>

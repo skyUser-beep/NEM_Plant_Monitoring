@@ -265,9 +265,7 @@ def update_user(user_id: int, payload: UserUpdate, db: Db) -> dict:
         or values.get("is_active", user.is_active) is False
     )
     if removing_admin:
-        active_admin_count = db.scalar(
-            select(User.id).where(User.role == "Administrator", User.is_active.is_(True), User.id != user.id).limit(1)
-        )
+        active_admin_count = db.scalar(select(User.id).where(User.role == "Administrator", User.is_active.is_(True), User.id != user.id).limit(1))
         if active_admin_count is None:
             raise HTTPException(status_code=409, detail="The last active administrator cannot be removed")
     role_or_password_changed = "role" in values or "password" in values

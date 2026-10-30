@@ -1,10 +1,16 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { Eye, Pencil, Trash2 } from "lucide-react";
 import { api } from "../../../services/api.js";
 import { useAuth } from "../../auth/AuthContext.jsx";
-import { EmptyState, Modal } from "../../../components/common/UI.jsx";
+import {
+  EmptyState,
+  FloatingMenu,
+  Modal,
+  useConfirmation,
+} from "../../../components/common/UI.jsx";
 import { formatTime } from "../../../utils/format.js";
-import { DotsIcon, EditIcon } from "../../../components/common/Icons.jsx";
+import { DotsIcon } from "../../../components/common/Icons.jsx";
 import "./MaintenancePanel.css";
 
 function todayDateInput() {
@@ -28,6 +34,8 @@ export default function CurrentMaintenanceCards({
 }) {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const confirm = useConfirmation();
+  const isAdministrator = user?.role === "Administrator";
   const canManageMaintenance = ["Administrator", "Supervisor"].includes(user?.role);
   const canOperateDueMaintenance = user?.role === "Operator";
   const [records, setRecords] = useState([]);
@@ -35,15 +43,26 @@ export default function CurrentMaintenanceCards({
   const [loading, setLoading] = useState(true);
   const [startingRecordId, setStartingRecordId] = useState(null);
   const [completingRecordId, setCompletingRecordId] = useState(null);
+  const [deletingRecordId, setDeletingRecordId] = useState(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [editingRecordId, setEditingRecordId] = useState(null);
+  const [actionMenuRecordId, setActionMenuRecordId] = useState(null);
+  const actionMenuTriggerRef = useRef(null);
   const lastLoadedDate = useRef("");
   const loadingRef = useRef(false);
-  const busy = startingRecordId !== null || completingRecordId !== null;
+  const busy =
+    startingRecordId !== null ||
+    completingRecordId !== null ||
+    deletingRecordId !== null;
 
 const openEdit = (record) => {
-  if (!canManageMaintenance) return;
+  if (
+    !canManageMaintenance ||
+    record.status === "in_progress" ||
+    record.status === "completed"
+  ) return;
 
   setEditingRecordId(record.id);
 
@@ -64,6 +83,58 @@ const openEdit = (record) => {
     }
   );
 };
+
+  const permanentlyDeleteRecord = async (record) => {
+    if (!isAdministrator || busy || record.status === "in_progress") return;
+    const scheduled =
+      Boolean(record.schedule_id) &&
+      !(record.status === "completed" && record.archived_at);
+    const plannedDate = record.planned_start_at
+      ? formatTime(record.planned_start_at)
+      : null;
+    const confirmation = scheduled
+      ? `Delete the entire schedule "${record.title}"${plannedDate ? `, scheduled for ${plannedDate}` : ""}, including its linked maintenance entries?`
+      : `Permanently delete maintenance "${record.title}"${plannedDate ? `, scheduled for ${plannedDate}` : ""}?`;
+    if (
+      !(await confirm(confirmation, {
+        title: scheduled ? "Delete maintenance schedule" : "Delete maintenance",
+        confirmLabel: "Delete",
+        destructive: true,
+      }))
+    ) return;
+    if (
+      (scheduled ||
+        (record.planned_start_at &&
+          new Date(record.planned_start_at) > new Date())) &&
+      !(await confirm(
+        `Confirm again: permanently delete "${record.title}"${plannedDate ? ` scheduled for ${plannedDate}` : ""}? This cannot be undone.`,
+        {
+          title: "Confirm permanent deletion",
+          confirmLabel: "Delete permanently",
+          destructive: true,
+        }
+      ))
+    ) {
+      return;
+    }
+
+    setDeletingRecordId(record.id);
+    setError("");
+    setNotice("");
+    try {
+      await api.del(`/maintenance/${record.id}/permanent`);
+      setSelectedRecord(null);
+      setNotice("Maintenance was permanently deleted.");
+      await Promise.all([
+        loadCurrentMaintenance(),
+        Promise.resolve(onChanged?.()),
+      ]);
+    } catch (deleteError) {
+      setError(deleteError.message || "Could not permanently delete maintenance.");
+    } finally {
+      setDeletingRecordId(null);
+    }
+  };
 
   const loadCurrentMaintenance = useCallback(async () => {
     if (loadingRef.current) return false;
@@ -114,6 +185,33 @@ const openEdit = (record) => {
   useEffect(() => {
     loadCurrentMaintenance();
   }, [loadCurrentMaintenance]);
+
+  useEffect(() => {
+    if (actionMenuRecordId === null) return undefined;
+
+    const handlePointerDown = (event) => {
+      if (!(event.target instanceof Element)) return;
+      if (
+        actionMenuTriggerRef.current?.contains(event.target) ||
+        event.target.closest("[data-current-maintenance-action-menu]")
+      ) {
+        return;
+      }
+      setActionMenuRecordId(null);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key !== "Escape") return;
+      setActionMenuRecordId(null);
+      actionMenuTriggerRef.current?.focus();
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [actionMenuRecordId]);
 
   useEffect(() => {
     let midnightTimer;
@@ -225,6 +323,11 @@ const openEdit = (record) => {
         <h3 className="current-maintenance-heading">Completed maintenance</h3>
       )}
       {error && <p className="notice error" role="alert">{error}</p>}
+      {notice && (
+        <div className="banner success" role="status">
+          <p>{notice}</p>
+        </div>
+      )}
       {showCompleted && displayedRecords.length === 0 ? (
         error ? null : (
           <EmptyState
@@ -272,30 +375,7 @@ const openEdit = (record) => {
                 </small>
               </div>
               <div className="rule-card-actions current-maintenance-actions">
-                {inProgress || completed ? (
-                  <>
-                    <button
-                      type="button"
-                      className="btn-outline"
-                      onClick={() => setSelectedRecord(record)}
-                    >
-                      Open maintenance
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-outline"
-                      onClick={() => openEdit(record)}
-                      disabled={busy || !canManageMaintenance}
-                      title={
-                        !canManageMaintenance
-                          ? "You do not have permission to edit maintenance records."
-                          : undefined
-                      }
-                    >
-                      <EditIcon size={13} /> Edit
-                    </button>
-                  </>
-                ) : (
+                {!inProgress && !completed && (
                   <button
                     type="button"
                     className="btn-primary"
@@ -319,6 +399,93 @@ const openEdit = (record) => {
                     {startingRecordId === record.id ? "Starting…" : "Start"}
                   </button>
                 )}
+                <div className="current-maintenance-action-menu">
+                    <button
+                      type="button"
+                      ref={actionMenuRecordId === record.id ? actionMenuTriggerRef : null}
+                      className="icon-outline sm maintenance-actions-trigger"
+                      title={`Maintenance actions for ${record.title}`}
+                      aria-label={`Maintenance actions for ${record.title}`}
+                      aria-haspopup="menu"
+                      aria-expanded={actionMenuRecordId === record.id}
+                      disabled={busy}
+                      onClick={() =>
+                        setActionMenuRecordId((current) =>
+                          current === record.id ? null : record.id
+                        )
+                      }
+                    >
+                      <DotsIcon size={17} />
+                    </button>
+                    {actionMenuRecordId === record.id && (
+                      <FloatingMenu
+                        align="right"
+                        role="menu"
+                        data-current-maintenance-action-menu=""
+                        data-maintenance-action-menu=""
+                      >
+                        <button
+                          type="button"
+                          className="maintenance-action-menu-item"
+                          role="menuitem"
+                          onClick={() => {
+                            setActionMenuRecordId(null);
+                            setSelectedRecord(record);
+                          }}
+                        >
+                          <Eye size={16} aria-hidden="true" />
+                          <span>View maintenance</span>
+                        </button>
+                        <button
+                          type="button"
+                          className="maintenance-action-menu-item maintenance-action-menu-item--edit"
+                          role="menuitem"
+                          onClick={() => {
+                            setActionMenuRecordId(null);
+                            openEdit(record);
+                          }}
+                          disabled={
+                            !canManageMaintenance ||
+                            inProgress ||
+                            completed ||
+                            busy
+                          }
+                          title={
+                            inProgress
+                              ? "In-progress maintenance cannot be edited."
+                              : completed
+                                ? "Completed maintenance cannot be edited."
+                                : !canManageMaintenance
+                                  ? "You do not have permission to edit maintenance records."
+                                  : undefined
+                          }
+                        >
+                          <Pencil size={16} aria-hidden="true" />
+                          <span>Edit maintenance</span>
+                        </button>
+                        {isAdministrator && (
+                          <button
+                            type="button"
+                            className="maintenance-action-menu-item maintenance-action-menu-item--delete"
+                            role="menuitem"
+                            onClick={() => {
+                              setActionMenuRecordId(null);
+                              permanentlyDeleteRecord(record);
+                            }}
+                            disabled={busy || inProgress}
+                            title={
+                              inProgress
+                                ? "In-progress maintenance cannot be deleted."
+                                : "Permanently delete maintenance"
+                            }
+                          >
+                            <Trash2 size={16} aria-hidden="true" />
+                            <span>Delete maintenance</span>
+                          </button>
+                        )}
+                      </FloatingMenu>
+                    )}
+                </div>
               </div>
             </article>
           );
@@ -469,14 +636,23 @@ const openEdit = (record) => {
               type="button"
               className="btn-outline"
               onClick={() => openEdit(selectedRecord)}
-              disabled={busy || !canManageMaintenance}
+              disabled={
+                busy ||
+                !canManageMaintenance ||
+                selectedRecord.status === "in_progress" ||
+                selectedRecord.status === "completed"
+              }
               title={
-                !canManageMaintenance
-                  ? "You do not have permission to edit maintenance records."
-                  : undefined
+                selectedRecord.status === "in_progress"
+                  ? "In-progress maintenance cannot be edited."
+                  : selectedRecord.status === "completed"
+                    ? "Completed maintenance cannot be edited."
+                    : !canManageMaintenance
+                      ? "You do not have permission to edit maintenance records."
+                      : undefined
               }
             >
-              <EditIcon size={13} /> Edit
+              <Pencil size={13} /> Edit
             </button>
             <button
               type="button"

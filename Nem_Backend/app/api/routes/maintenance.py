@@ -2,10 +2,12 @@
 from datetime import date, datetime, time, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import delete, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from sqlalchemy.sql import Executable
 
 from app.db.session import get_db
-from app.api.routes.auth import get_current_user
+from app.api.routes.auth import get_current_user, require_roles
 from app.models import (
     Alert,
     Asset,
@@ -29,6 +31,35 @@ from app.services.maintenance_schedule import due_status, next_due_date
 from app.services.monitoring_engine import emit_event, utc_now
 
 router = APIRouter(prefix="/maintenance", tags=["maintenance"])
+
+
+def _flush_deletion(session: Session, detail: str) -> None:
+    try:
+        session.flush()
+    except IntegrityError as error:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=detail) from error
+
+
+def _commit_deletion(session: Session, detail: str) -> None:
+    try:
+        session.commit()
+    except IntegrityError as error:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=detail) from error
+
+
+def _execute_deletion(
+    session: Session,
+    statement: Executable,
+    detail: str,
+) -> None:
+    try:
+        session.execute(statement)
+    except IntegrityError as error:
+        session.rollback()
+        raise HTTPException(status_code=409, detail=detail) from error
+
 
 #Find a maintenance schedule by its db ID
 def _schedule_or_404(session: Session, schedule_id: int) -> MaintenanceSchedule:
@@ -435,6 +466,7 @@ def get_maintenance_schedule(
 def permanently_delete_maintenance_schedule(
     schedule_id: int,
     session: Session = Depends(get_db),
+    user: User = Depends(require_roles("Administrator")),
 ) -> None:
     schedule = session.scalar(
         select(MaintenanceSchedule)
@@ -474,12 +506,20 @@ def permanently_delete_maintenance_schedule(
     deleted_occurrence_ids = [record.id for record in records]
     for record in records:
         session.delete(record)
-    session.flush()
+    _flush_deletion(session, "Related maintenance history prevents deleting this schedule.")
     if alert_ids:
-        session.execute(delete(MonitoringEvent).where(MonitoringEvent.alert_id.in_(alert_ids)))
-        session.execute(delete(Alert).where(Alert.id.in_(alert_ids)))
+        _execute_deletion(
+            session,
+            delete(MonitoringEvent).where(MonitoringEvent.alert_id.in_(alert_ids)),
+            "Related maintenance history prevents deleting this schedule.",
+        )
+        _execute_deletion(
+            session,
+            delete(Alert).where(Alert.id.in_(alert_ids)),
+            "Related maintenance history prevents deleting this schedule.",
+        )
     session.delete(schedule)
-    session.flush()
+    _flush_deletion(session, "Related maintenance history prevents deleting this schedule.")
     emit_event(
         session,
         event_type="maintenance_schedule_permanently_deleted",
@@ -492,13 +532,37 @@ def permanently_delete_maintenance_schedule(
             "deleted_occurrence_ids": deleted_occurrence_ids,
         },
     )
-    session.commit()
+    _commit_deletion(
+        session,
+        "Related maintenance history prevents deleting this schedule.",
+    )
 
 
 # User can change selected fields without sending the entire schedule again.
 @router.patch("/schedules/{schedule_id}", response_model=MaintenanceScheduleRead)
 def update_maintenance_schedule(schedule_id: int,payload: MaintenanceScheduleUpdate,session: Session = Depends(get_db), user: User = Depends(get_current_user),) -> MaintenanceScheduleRead:
-    schedule = _schedule_or_404(session, schedule_id)
+    schedule = session.scalar(
+        select(MaintenanceSchedule)
+        .where(MaintenanceSchedule.id == schedule_id)
+        .with_for_update()
+    )
+    if schedule is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Maintenance schedule {schedule_id} was not found",
+        )
+
+    if schedule.current_occurrence_id is not None:
+        current_occurrence = session.scalar(
+            select(MaintenanceRecord)
+            .where(MaintenanceRecord.id == schedule.current_occurrence_id)
+            .with_for_update()
+        )
+        if current_occurrence is not None and current_occurrence.status == "in_progress":
+            raise HTTPException(
+                status_code=409,
+                detail="In-progress maintenance cannot be edited.",
+            )
 
     changes = payload.model_dump(exclude_unset=True)
     if not changes:
@@ -508,10 +572,10 @@ def update_maintenance_schedule(schedule_id: int,payload: MaintenanceScheduleUpd
     if user.role == "Operator":
         raise HTTPException(status_code=403, detail="Operators are not allowed to edit maintenance schedules")
     if user.role == "Supervisor":
-        allowed_supervisor_fields = {"recurrence_interval", "recurrence_unit"}
+        allowed_supervisor_fields = {"schedule_start_date", "first_due_date"}
         restricted = set(changes.keys()) - allowed_supervisor_fields
         if restricted:
-            raise HTTPException(status_code=403,detail=f"Supervisors can only edit recurrence interval and unit. Restricted fields: {', '.join(sorted(restricted))}",)
+            raise HTTPException(status_code=403,detail=f"Supervisors can only edit schedule dates. Restricted fields: {', '.join(sorted(restricted))}",)
 
     if "instruction_document_ids" in changes:
         changes["instruction_document_ids"] = _validate_instruction_documents(session, changes["instruction_document_ids"] or [])
@@ -819,6 +883,7 @@ def get_maintenance_record(
 def archive_completed_maintenance_record(
     record_id: int,
     session: Session = Depends(get_db),
+    user: User = Depends(require_roles("Administrator")),
 ) -> None:
     record = session.scalar(
         select(MaintenanceRecord)
@@ -862,6 +927,7 @@ def archive_completed_maintenance_record(
 def permanently_delete_archived_maintenance_record(
     record_id: int,
     session: Session = Depends(get_db),
+    user: User = Depends(require_roles("Administrator")),
 ) -> None:
     record = session.scalar(
         select(MaintenanceRecord)
@@ -871,7 +937,7 @@ def permanently_delete_archived_maintenance_record(
     if record is None:
         raise HTTPException(status_code=404,detail=f"Maintenance record {record_id} was not found",)
     if record.schedule_id is not None and not (record.status == "completed" and record.archived_at is not None):
-        permanently_delete_maintenance_schedule(record.schedule_id, session)
+        permanently_delete_maintenance_schedule(record.schedule_id, session, user)
         return None
     if record.status == "in_progress":
         raise HTTPException(status_code=409,detail="Maintenance currently in progress cannot be permanently deleted.",)
@@ -898,7 +964,7 @@ def permanently_delete_archived_maintenance_record(
     deleted_asset_id = record.asset_id
     record_id_value = record.id
     session.delete(record)
-    session.flush()
+    _flush_deletion(session, "Related maintenance history prevents deleting this record.")
     emit_event(
         session,
         event_type="maintenance_record_permanently_deleted",
@@ -911,7 +977,10 @@ def permanently_delete_archived_maintenance_record(
             "schedule_id": schedule_id,
         },
     )
-    session.commit()
+    _commit_deletion(
+        session,
+        "Related maintenance history prevents deleting this record.",
+    )
 
 
 #Modifies a maintenance record,but not allow completed or archived records to be edited 
@@ -922,7 +991,22 @@ def update_maintenance_record(
     session: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> MaintenanceRecord:
-    record = _record_or_404(session, record_id)
+    record = session.scalar(
+        select(MaintenanceRecord)
+        .where(MaintenanceRecord.id == record_id)
+        .with_for_update()
+    )
+    if record is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Maintenance record {record_id} was not found",
+        )
+    if record.status == "in_progress":
+        raise HTTPException(
+            status_code=409,
+            detail="In-progress maintenance cannot be edited.",
+        )
+
     changes = payload.model_dump(exclude_unset=True)
     if not changes:
         raise HTTPException(status_code=422, detail="Provide at least one field to update")
@@ -931,21 +1015,10 @@ def update_maintenance_record(
     if user.role == "Operator":
         raise HTTPException(status_code=403, detail="Operators are not allowed to edit maintenance records")
     if user.role == "Supervisor":
-        # Supervisors can edit fields related to the maintenance execution details
-        allowed_supervisor_fields = {
-            "actual_started_at",
-            "actual_completed_at",
-            "notes",
-            "completion_notes",
-            "parts_used",
-            "checklist",
-            "next_due_at",
-            "priority",
-            "assigned_technician",
-        }
+        allowed_supervisor_fields = {"planned_start_at", "planned_end_at"}
         restricted = set(changes.keys()) - allowed_supervisor_fields
         if restricted:
-            raise HTTPException(status_code=403,detail=f"Supervisors can only edit execution details. Restricted fields: {', '.join(sorted(restricted))}",)
+            raise HTTPException(status_code=403,detail=f"Supervisors can only edit planned maintenance dates. Restricted fields: {', '.join(sorted(restricted))}",)
 
     if record.status == "completed" or record.archived_at is not None:
         raise HTTPException(status_code=409,detail="Completed or archived maintenance cannot be edited",)
@@ -953,7 +1026,7 @@ def update_maintenance_record(
         "planned_start_at",
         "planned_end_at",
     }.intersection(changes):
-        raise HTTPException(status_code=409,detail="Change the due date through the maintenance schedule",)
+        raise HTTPException(status_code=409,detail="Change scheduled dates through the maintenance schedule",)
     if "alert_id" in changes:
         _validate_alert(
             session,

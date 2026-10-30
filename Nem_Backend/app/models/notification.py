@@ -10,7 +10,7 @@ from app.db.session import UTCDateTime
 
 #This table stores which supervisors are directly assigned to which assets.
 class AssetSupervisor(Base):
-    #Supervisor responsible for an asset; children inherit from the nearest assigned ancestor.
+    #Supervisor assignment applies directly and is inherited by every descendant asset.
     __tablename__ = "nem_asset_supervisors"
     __table_args__ = (UniqueConstraint("asset_id", "user_id", name="uq_nem_asset_supervisors"),)
 

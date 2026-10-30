@@ -42,26 +42,49 @@ def _now() -> datetime:
 def valid_email(value: str | None) -> bool:
     return bool(value) and len(value) <= 254 and bool(_EMAIL_REGEX.match(value.strip()))
 
-def supervisors_for_asset(session: Session, asset: Asset) -> list[User]:
-    #Active Supervisors assigned to the asset or, failing that, its nearest assigned ancestor.
-    current: Asset | None = asset
-    visited: set[int] = set()
-    while current is not None and current.id not in visited:
-        visited.add(current.id)
-        users = session.scalars(
-            select(User)
-            .join(AssetSupervisor, AssetSupervisor.user_id == User.id)
+def supervisor_assignments_for_asset(
+    session: Session,
+    asset: Asset,
+) -> list[tuple[int, str, User]]:
+    ancestry = (
+        select(Asset.id, Asset.parent_asset_id, Asset.name)
+        .where(Asset.id == asset.id)
+        .cte("asset_ancestry", recursive=True)
+    )
+    # UNION deduplicates asset/parent pairs, so malformed cycles terminate.
+    ancestry = ancestry.union(
+        select(Asset.id, Asset.parent_asset_id, Asset.name).join(
+            ancestry, Asset.id == ancestry.c.parent_asset_id
+        )
+    )
+    return list(
+        session.execute(
+            select(ancestry.c.id, ancestry.c.name, User)
+            .join(AssetSupervisor, AssetSupervisor.asset_id == ancestry.c.id)
+            .join(User, User.id == AssetSupervisor.user_id)
             .where(
-                AssetSupervisor.asset_id == current.id,
                 User.is_active.is_(True),
                 User.role == "Supervisor",
             )
-            .order_by(User.id)
+            .order_by(ancestry.c.id, User.id)
         ).all()
-        if users:
-            return list(users)
-        current = session.get(Asset, current.parent_asset_id) if current.parent_asset_id else None
-    return []
+    )
+
+
+def _assigned_supervisors_for_asset(session: Session, asset: Asset) -> list[User]:
+    users_by_id = {
+        user.id: user
+        for _, _, user in supervisor_assignments_for_asset(session, asset)
+    }
+    return [users_by_id[user_id] for user_id in sorted(users_by_id)]
+
+
+def supervisors_for_asset(session: Session, asset: Asset) -> list[User]:
+    return [
+        user
+        for user in _assigned_supervisors_for_asset(session, asset)
+        if valid_email(user.email_address)
+    ]
 
 
 def _location(session: Session, asset: Asset) -> str:
@@ -101,8 +124,8 @@ def _enqueue(session: Session, alert: Alert, asset: Asset, rule: MonitoringRule 
         return 0
     if alert.id is None:
         session.flush()
-    supervisors = supervisors_for_asset(session, asset)
-    if not supervisors:
+    assigned_supervisors = _assigned_supervisors_for_asset(session, asset)
+    if not assigned_supervisors:
         LOGGER.warning("No supervisor assigned to asset %s (%s); %s email for alert %s not sent",
             asset.id, asset.name, alert.severity, alert.id,
         )
@@ -124,32 +147,29 @@ def _enqueue(session: Session, alert: Alert, asset: Asset, rule: MonitoringRule 
         "link": f"{base_url}/assets/{asset.id}" if base_url else None,
     }
     queued = 0
-    queued_addresses: set[str] = set()
-    for user in supervisors:
-        exists = session.scalar(
-            select(EmailNotification.id).where(
+    existing_user_ids = set(
+        session.scalars(
+            select(EmailNotification.user_id).where(
                 EmailNotification.alert_id == alert.id,
                 EmailNotification.severity == alert.severity,
-                EmailNotification.user_id == user.id,
+                EmailNotification.user_id.in_(
+                    [user.id for user in assigned_supervisors]
+                ),
             )
-        )
+        ).all()
+    ) if assigned_supervisors else set()
+    for user in assigned_supervisors:
+        if user.id in existing_user_ids:
+            continue
         if not valid_email(user.email_address):
-            if exists is None:
-                session.add(EmailNotification(
-                    alert_id=alert.id, user_id=user.id, severity=alert.severity, payload=payload,
-                    status="skipped", last_error="Supervisor has no valid email address",
-                ))
-                LOGGER.warning("Supervisor user %s has no valid email; skipping alert %s email", user.id, alert.id)
+            session.add(EmailNotification(
+                alert_id=alert.id, user_id=user.id, severity=alert.severity,
+                payload=payload, status="skipped",
+                last_error="Supervisor has no valid email address",
+            ))
+            LOGGER.warning("Supervisor user %s has no valid email; skipping alert %s email",user.id, alert.id,)
             continue
-        normalized_email = (user.email_address or "").strip().casefold()
-        if normalized_email in queued_addresses:
-            continue
-        queued_addresses.add(normalized_email)
-        if exists is not None:
-            continue
-        session.add(EmailNotification(
-            alert_id=alert.id, user_id=user.id, severity=alert.severity, payload=payload,
-        ))
+        session.add(EmailNotification(alert_id=alert.id, user_id=user.id, severity=alert.severity, payload=payload,))
         queued += 1
     session.flush()
     return queued
@@ -369,23 +389,6 @@ def describe_smtp_error(error: Exception) -> str:
     if isinstance(error, (OSError, smtplib.SMTPException)):
         return f"SMTP delivery error ({type(error).__name__})"
     return f"Unexpected error ({type(error).__name__})"
-
-#This is function called by test-email feature in settings page
-def send_test_email(session: Session, settings: Settings, recipient: str) -> None:
-    """Send a one-off SMTP test without creating or changing an alert/outbox row."""
-    normalized_recipient = recipient.strip()
-    if not valid_email(normalized_recipient):
-        raise SmtpConfigError("Test recipient email address is invalid")
-
-    config = _load_smtp_config(session, settings)
-    message = EmailMessage()
-    message["Subject"] = "[NEM Monitoring] SMTP test"
-    message["From"] = formataddr(("NEM Plant Monitoring", config["from_address"]))
-    message["To"] = normalized_recipient
-    message.set_content("This is a test email from NEM Plant Monitoring.\n\n"
-        "No alert or monitoring record was created or changed.\n"
-    )
-    _send(config, message, settings.email_smtp_timeout_seconds)
 
 #Background delivery and retry logic , a worker that delivers the persistent outbox jobs.
 def deliver_pending(session_factory, settings: Settings, *, batch_size: int = 20) -> int:

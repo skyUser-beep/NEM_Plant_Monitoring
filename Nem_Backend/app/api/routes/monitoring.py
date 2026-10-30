@@ -4,9 +4,11 @@ from datetime import datetime, timezone # work with timestamps and UTC
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 #func -> SQL Function, or_ -> Combines SQL Condition using OR, select -> constructs SQL queries
 from sqlalchemy import and_, func, or_, select
+from sqlalchemy.exc import IntegrityError
 #Represents the SQLAlchemy database session
 from sqlalchemy.orm import Session
 
+from app.api.routes.auth import require_roles
 from app.db.session import get_db
 from app.models import (
     Alert, 
@@ -465,12 +467,23 @@ def get_event(event_id: int, session: Session = Depends(get_db)) -> MonitoringEv
     return event
 
 @router.delete("/events/{event_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_event(event_id: int, session: Session = Depends(get_db)) -> Response:
+def delete_event(
+    event_id: int,
+    session: Session = Depends(get_db),
+    user: User = Depends(require_roles("Administrator")),
+) -> Response:
     event = session.get(MonitoringEvent, event_id)
     if event is None:
         raise HTTPException(status_code=404, detail=f"Event {event_id} was not found")
-    session.delete(event)
-    session.commit()
+    try:
+        session.delete(event)
+        session.commit()
+    except IntegrityError as error:
+        session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="This event is referenced by retained history and cannot be deleted.",
+        ) from error
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 # A reading arrives -> the monitoring engine evaluates the rules -> dashboard request the status -> dashboard display the alert -> an operator acknowledge the alert -> the dashboard displays the history

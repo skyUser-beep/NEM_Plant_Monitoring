@@ -5,6 +5,7 @@ import { api } from "../../../services/api.js";
 export default function AssetSupervisors({ assetId }) {
   const [users, setUsers] = useState([]);
   const [selected, setSelected] = useState([]);
+  const [inherited, setInherited] = useState([]);
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
 
@@ -15,6 +16,7 @@ export default function AssetSupervisors({ assetId }) {
         if (!active) return;
         setUsers((allUsers || []).filter((u) => u.role === "Supervisor" && u.is_active));
         setSelected((assignment?.supervisors || []).map((s) => s.id));
+        setInherited(assignment?.inherited_supervisors || []);
       })
       .catch((error) => active && setMessage(error.message));
     return () => { active = false; };
@@ -38,8 +40,22 @@ export default function AssetSupervisors({ assetId }) {
 
   return (
     <details className="muted" style={{ marginTop: 8 }}>
-      <summary>Email notification supervisors ({selected.length})</summary>
+      <summary>
+        Direct email supervisors ({selected.length})
+        {inherited.length > 0 ? ` · ${inherited.length} inherited` : ""}
+      </summary>
       <div style={{ display: "grid", gap: 6, padding: "8px 0" }}>
+        {inherited.length > 0 && (
+          <div aria-label="Inherited email notification supervisors">
+            <strong>Inherited supervisors</strong>
+            {inherited.map((u) => (
+              <div key={u.id}>
+                {u.username} {u.email_address ? `(${u.email_address})` : "(no email address)"} — Inherited from{" "}
+                {u.inherited_from.map((source) => source.asset_name).join(", ")}
+              </div>
+            ))}
+          </div>
+        )}
         {users.length === 0 && <span>No active supervisors available.</span>}
         {users.map((u) => (
           <label key={u.id}>
