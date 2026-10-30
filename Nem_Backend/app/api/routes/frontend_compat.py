@@ -8,7 +8,7 @@ import mimetypes
 from pathlib import Path
 from uuid import uuid4
 from zipfile import BadZipFile
-from typing import Any
+from typing import Any, Literal
 
 from cryptography.fernet import Fernet # encrypts and decrypts sensitive values, such as a saved email password
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
@@ -49,6 +49,7 @@ from app.schemas.rule import (
     RuleTemplateRead,
     UsageRuleCreate,
 )
+from app.schemas.maintenance import MaintenanceScheduleCreate
 from app.services.frontend_backup import create_backup, restore_backup
 from app.services.monitoring_engine import (emit_event,resolve_active_rule_alerts,set_rule_enabled_state,)
 from app.api.routes.rules import (
@@ -83,6 +84,11 @@ class CollectionCreate(BaseModel):
         if not value:
             raise ValueError("Collection name cannot be empty")
         return value
+
+
+class MaintenanceSuggestionPayload(BaseModel):
+    suggestion_type: Literal["maintenance"]
+    maintenance: MaintenanceScheduleCreate
 
 #Validate an instruction document`s title and type
 class DocumentCreate(BaseModel):
@@ -557,9 +563,23 @@ def _validate_template_collection(
 
 def _rule_template_request_row(
     item: MonitoringRuleTemplateRequest,
+    session: Session,
 ) -> dict[str, Any]:
+    requester = session.get(User, item.requested_by)
+    reviewer = (
+        session.get(User, item.reviewed_by)
+        if item.reviewed_by is not None
+        else None
+    )
+    maintenance_details = item.maintenance_details
+    asset = (
+        session.get(Asset, maintenance_details.get("asset_id"))
+        if maintenance_details and maintenance_details.get("asset_id")
+        else None
+    )
     return {
         "id": item.id,
+        "suggestion_type": item.suggestion_type,
         "name": item.name,
         "description": item.description,
         "rule_type": item.rule_type,
@@ -576,11 +596,15 @@ def _rule_template_request_row(
         "requested_by": item.requested_by,
         "status": item.status,
         "reviewed_by": item.reviewed_by,
+        "requested_by_name": requester.username if requester else None,
+        "reviewed_by_name": reviewer.username if reviewer else None,
         "reviewed_at": (
             item.reviewed_at.isoformat() if item.reviewed_at else None
         ),
         "review_comment": item.review_comment,
         "created_at": item.created_at.isoformat() if item.created_at else None,
+        "maintenance_details": maintenance_details,
+        "maintenance_asset_name": asset.name if asset else None,
     }
 
 
@@ -596,7 +620,7 @@ def _authenticated_user(request: Request, session: Session) -> User:
 
 @router.post("/rule-template-requests", status_code=201)
 def submit_rule_template_request(
-    payload: RuleTemplateCreate,
+    payload: RuleTemplateCreate | MaintenanceSuggestionPayload,
     request: Request,
     session: Session = Depends(get_db),
 ) -> dict[str, Any]:
@@ -605,18 +629,47 @@ def submit_rule_template_request(
     if user.role != "Supervisor":
         raise HTTPException(status_code=403,detail="Only Supervisors can suggest reusable monitoring rules",)
 
-    _validate_template_collection(session, payload.collection_id)
+    if isinstance(payload, MaintenanceSuggestionPayload):
+        maintenance = payload.maintenance
+        if session.get(Asset, maintenance.asset_id) is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Asset {maintenance.asset_id} was not found",
+            )
+        from app.api.routes.maintenance import _validate_instruction_documents
 
-    item = MonitoringRuleTemplateRequest(
-        **payload.model_dump(),
-        requested_by=user.id,
-        status="pending",
-    )
+        maintenance = maintenance.model_copy(
+            update={
+                "instruction_document_ids": _validate_instruction_documents(
+                    session,
+                    maintenance.instruction_document_ids,
+                )
+            }
+        )
+        item = MonitoringRuleTemplateRequest(
+            name=maintenance.title,
+            description=maintenance.description,
+            rule_type="maintenance_schedule",
+            severity="warning",
+            is_enabled=False,
+            requested_by=user.id,
+            status="pending",
+            suggestion_type="maintenance",
+            maintenance_details=maintenance.model_dump(mode="json"),
+        )
+    else:
+        _validate_template_collection(session, payload.collection_id)
+        item = MonitoringRuleTemplateRequest(
+            **payload.model_dump(),
+            requested_by=user.id,
+            status="pending",
+            suggestion_type="monitoring_rule",
+        )
     session.add(item)
     session.commit()
     session.refresh(item)
 
-    return _rule_template_request_row(item)
+    return _rule_template_request_row(item, session)
 
 
 @router.get("/rule-template-requests")
@@ -644,7 +697,7 @@ def list_rule_template_requests(
         )
     ).all()
 
-    return [_rule_template_request_row(item) for item in items]
+    return [_rule_template_request_row(item, session) for item in items]
 
 
 @router.post("/rule-template-requests/{request_id}/approve")
@@ -670,8 +723,46 @@ def approve_rule_template_request(
     if item.status != "pending":
         raise HTTPException(status_code=409, detail="This suggestion has already been reviewed")
 
-    _validate_template_collection(session, item.collection_id)
+    if item.suggestion_type == "maintenance":
+        if not item.maintenance_details:
+            raise HTTPException(
+                status_code=409,
+                detail="The maintenance suggestion is missing its schedule details.",
+            )
+        from app.api.routes.maintenance import _create_maintenance_schedule
 
+        try:
+            maintenance = MaintenanceScheduleCreate.model_validate(
+                item.maintenance_details
+            )
+            schedule = _create_maintenance_schedule(session, maintenance)
+            item.status = "approved"
+            item.reviewed_by = user.id
+            item.reviewed_at = datetime.now(timezone.utc)
+            session.commit()
+        except HTTPException:
+            session.rollback()
+            raise
+        except ValidationError as error:
+            session.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="The maintenance suggestion contains invalid schedule details.",
+            ) from error
+        except IntegrityError as error:
+            session.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="The maintenance schedule could not be created because related data changed.",
+            ) from error
+        return {
+            "status": "approved",
+            "request_id": item.id,
+            "suggestion_type": item.suggestion_type,
+            "schedule_id": schedule.id,
+        }
+
+    _validate_template_collection(session, item.collection_id)
     template = MonitoringRuleTemplate(
         name=item.name,
         description=item.description,
@@ -698,6 +789,7 @@ def approve_rule_template_request(
     return {
         "status": "approved",
         "request_id": item.id,
+        "suggestion_type": item.suggestion_type,
         "template": RuleTemplateRead.model_validate(template).model_dump(mode="json"),
     }
 
@@ -731,7 +823,7 @@ def decline_rule_template_request(
     session.commit()
     session.refresh(item)
 
-    return _rule_template_request_row(item)
+    return _rule_template_request_row(item, session)
     
 #Creating a template not an asset-specific rule - templates are reusable definitions that can be assigned to multiple assets
 @router.post("/rule-templates", response_model=RuleTemplateRead, status_code=201)

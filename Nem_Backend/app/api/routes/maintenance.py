@@ -390,6 +390,16 @@ def create_maintenance_schedule(
     payload: MaintenanceScheduleCreate,
     session: Session = Depends(get_db),
 ) -> MaintenanceScheduleRead:
+    schedule = _create_maintenance_schedule(session, payload)
+    session.commit()
+    session.refresh(schedule)
+    return _schedule_read(session, schedule)
+
+
+def _create_maintenance_schedule(
+    session: Session,
+    payload: MaintenanceScheduleCreate,
+) -> MaintenanceSchedule:
     if session.get(Asset, payload.asset_id) is None:
         raise HTTPException(status_code=404,detail=f"Asset {payload.asset_id} was not found",)
     schedule = MaintenanceSchedule(
@@ -420,9 +430,7 @@ def create_maintenance_schedule(
         message=f"Maintenance scheduled: {schedule.title}, due {payload.first_due_date}.",
         due_date=payload.first_due_date,
     )
-    session.commit()
-    session.refresh(schedule)
-    return _schedule_read(session, schedule)
+    return schedule
 
 #Listing and viewing schedules
 @router.get("/schedules")
@@ -557,10 +565,29 @@ def update_maintenance_schedule(schedule_id: int,payload: MaintenanceScheduleUpd
     if user.role == "Operator":
         raise HTTPException(status_code=403, detail="Operators are not allowed to edit maintenance schedules")
     if user.role == "Supervisor":
-        allowed_supervisor_fields = {"schedule_start_date", "first_due_date"}
+        allowed_supervisor_fields = {
+            "schedule_start_date",
+            "first_due_date",
+            "recurrence_interval",
+            "recurrence_unit",
+        }
         restricted = set(changes.keys()) - allowed_supervisor_fields
         if restricted:
-            raise HTTPException(status_code=403,detail=f"Supervisors can only edit schedule dates. Restricted fields: {', '.join(sorted(restricted))}",)
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "Supervisors can only edit schedule dates and recurrence "
+                    f"intervals. Restricted fields: {', '.join(sorted(restricted))}"
+                ),
+            )
+        if (
+            {"recurrence_interval", "recurrence_unit"}.intersection(changes)
+            and not schedule.recurrence_enabled
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="Only recurring maintenance schedules have editable recurrence intervals.",
+            )
 
     if "instruction_document_ids" in changes:
         changes["instruction_document_ids"] = _validate_instruction_documents(session, changes["instruction_document_ids"] or [])
@@ -579,7 +606,10 @@ def update_maintenance_schedule(schedule_id: int,payload: MaintenanceScheduleUpd
     ):
         raise HTTPException(status_code=409,detail="The first due date cannot change after an occurrence has been completed",)
 
-    if "schedule_start_date" in changes:
+    if (
+        "schedule_start_date" in changes
+        and changes["schedule_start_date"] != schedule.schedule_start_date
+    ):
         if schedule.last_completed_at is not None and not administrator_can_reanchor:
             raise HTTPException(status_code=409,detail="The schedule anchor cannot change after an occurrence has been completed",)
 
@@ -613,17 +643,15 @@ def update_maintenance_schedule(schedule_id: int,payload: MaintenanceScheduleUpd
         }
         for schedule_field, occurrence_field in occurrence_fields.items():
             if schedule_field in changes:
-                setattr(
-                    current_occurrence,
-                    occurrence_field,
-                    schedule.title if schedule_field == "title"
-                    else schedule.description if schedule_field == "description"
-                    else getattr(schedule, schedule_field),
-                )
+                if schedule_field == "title":
+                    value = schedule.title
+                elif schedule_field == "description":
+                    value = schedule.description
+                else:
+                    value = getattr(schedule, schedule_field)
+                setattr(current_occurrence, occurrence_field, value)
         if "assigned_technician" in changes:
-            current_occurrence.performed_by = (
-                schedule.assigned_technician or "Unassigned"
-            )
+            current_occurrence.performed_by = schedule.assigned_technician or "Unassigned"
 
     if "schedule_start_date" in changes and schedule.last_completed_at is None:
         schedule.current_period_start_date = schedule.schedule_start_date
@@ -1111,9 +1139,7 @@ def complete_maintenance_record(
     )
     if record is None:
         raise HTTPException(status_code=404,detail=f"Maintenance record {record_id} was not found",)
-    _authorize_operator_due_occurrence(
-        session, record, user, action="complete"
-    )
+    _authorize_operator_due_occurrence(session, record, user, action="complete")
     if record.status in {"completed", "cancelled"}:
         raise HTTPException(status_code=409,detail="Completed or cancelled maintenance cannot be completed",)
     if schedule is not None and (

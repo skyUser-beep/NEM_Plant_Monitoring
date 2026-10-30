@@ -80,6 +80,14 @@ class MonitoringRuleTemplateRequest(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
 
+    suggestion_type: Mapped[str] = mapped_column(
+        String(30),
+        default="monitoring_rule",
+        server_default="monitoring_rule",
+        nullable=False,
+    )
+    maintenance_details: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+
     # Proposed reusable rule configuration.
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)

@@ -30,6 +30,7 @@ from app.schemas.monitoring import (
 from app.services.monitoring_engine import (
     emit_event,
     evaluate_rules,
+    set_rule_enabled_state,
     utc_now,
 )
 
@@ -400,6 +401,21 @@ def complete_alert(
         alert.status = "resolved"
         alert.resolved_at = now
         alert.last_updated_at = now
+        if alert.rule_id is not None:
+            rule = session.scalar(
+                select(MonitoringRule)
+                .where(MonitoringRule.id == alert.rule_id)
+                .with_for_update()
+            )
+            if rule is None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="The alert's monitoring rule could not be found.",
+                )
+            if rule.is_enabled:
+                set_rule_enabled_state(session, rule, False, at=now)
+            rule.lifecycle_status = "completed"
+            rule.completed_at = now
         emit_event(
             session,
             event_type="alert_completed",
@@ -417,6 +433,22 @@ def complete_alert(
                 "outcome": "alert_instance_completed",
             },
         )
+        if alert.rule_id is not None:
+            emit_event(
+                session,
+                event_type="rule_completed",
+                message=f"Rule evaluated after completing alert: {alert.title}.",
+                occurred_at=now,
+                asset_id=alert.target_asset_id,
+                rule_id=alert.rule_id,
+                alert_id=alert.id,
+                severity=alert.severity,
+                metadata={
+                    "completed_by": user.username,
+                    "completed_at": now.isoformat(),
+                    "outcome": "rule_evaluated",
+                },
+            )
         try:
             session.commit()
         except IntegrityError as error:

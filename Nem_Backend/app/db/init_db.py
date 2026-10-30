@@ -125,6 +125,29 @@ def initialize_database(engine: Engine) -> None:
                 "ix_nem_monitoring_rule_templates_collection_id "
                 "ON nem_monitoring_rule_templates (collection_id)"
             ))
+    if "nem_monitoring_rule_template_requests" in table_names:
+        request_columns = {
+            column["name"]
+            for column in inspect(engine).get_columns(
+                "nem_monitoring_rule_template_requests"
+            )
+        }
+        with engine.begin() as connection:
+            if "suggestion_type" not in request_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE nem_monitoring_rule_template_requests "
+                        "ADD COLUMN suggestion_type VARCHAR(30) NOT NULL "
+                        "DEFAULT 'monitoring_rule'"
+                    )
+                )
+            if "maintenance_details" not in request_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE nem_monitoring_rule_template_requests "
+                        "ADD COLUMN maintenance_details JSON"
+                    )
+                )
     if "instruction_documents" in table_names:
         document_columns = {
             column["name"]

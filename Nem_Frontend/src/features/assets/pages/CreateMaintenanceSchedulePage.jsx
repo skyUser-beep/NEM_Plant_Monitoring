@@ -77,6 +77,7 @@ export default function CreateMaintenanceSchedulePage() {
   const isEdit = Boolean(scheduleId || recordId);
   const navigate = useNavigate();
   const location = useLocation();
+  const isSuggestion = location.pathname === "/maintenance/suggest";
   const maintenanceRecord = location.state?.maintenanceRecord;
 
   const [form, setForm] = useState({
@@ -113,6 +114,32 @@ export default function CreateMaintenanceSchedulePage() {
     useState(false);
   const [instructionsError, setInstructionsError] = useState("");
   const [instructionSearch, setInstructionSearch] = useState("");
+  const [suggestionAssets, setSuggestionAssets] = useState([]);
+  const [suggestionAssetId, setSuggestionAssetId] = useState("");
+
+  useEffect(() => {
+    if (!isSuggestion) return undefined;
+    let cancelled = false;
+    api.getAll("/assets", 200)
+      .then((items) => {
+        if (!cancelled) {
+          setSuggestionAssets(Array.isArray(items) ? items : []);
+        }
+      })
+      .catch((requestError) => {
+        if (!cancelled) {
+          setError(
+            getErrorMessage(
+              requestError,
+              "Could not load assets for the maintenance suggestion."
+            )
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isSuggestion]);
 
   useEffect(() => {
     if (!isEdit) {
@@ -297,6 +324,10 @@ export default function CreateMaintenanceSchedulePage() {
   };
 
   const goToMaintenanceLog = () => {
+    if (isSuggestion) {
+      navigate("/configuration/rules");
+      return;
+    }
     navigate(`/assets/${id}`, {
       state: { activeTab: "logbook" },
     });
@@ -305,17 +336,26 @@ export default function CreateMaintenanceSchedulePage() {
   const handleSubmit = async (event) => {
     event.preventDefault();
 
-    if (!canManageMaintenance || busy || editingBlocked) return;
+    const canSubmit = isSuggestion ? isSupervisor : canManageMaintenance;
+    if (!canSubmit || busy || editingBlocked) return;
 
     setError("");
 
-    if (!String(id ?? "").trim() || !Number.isFinite(Number(id))) {
+    if (
+      !isSuggestion &&
+      (!String(id ?? "").trim() || !Number.isFinite(Number(id)))
+    ) {
       setError("A valid asset ID is required.");
       return;
     }
 
-    if (!isSupervisor && !form.title.trim()) {
+    if ((!isSupervisor || isSuggestion) && !form.title.trim()) {
       setError("Maintenance title is required.");
+      return;
+    }
+
+    if (isSuggestion && !suggestionAssetId) {
+      setError("Select the asset for this maintenance suggestion.");
       return;
     }
 
@@ -354,24 +394,39 @@ export default function CreateMaintenanceSchedulePage() {
       schedule_start_date: form.schedule_start_date,
       first_due_date: form.first_due_date,
     };
-    const payload = isSupervisor
-      ? scheduleDates
+    const scheduleDetails = {
+      title: form.title.trim(),
+      maintenance_type: form.maintenance_type,
+      priority: form.priority,
+      assigned_technician: form.assigned_technician.trim() || null,
+      description: form.description.trim() || null,
+      ...scheduleDates,
+      recurrence_enabled: form.recurrence_enabled,
+      recurrence_interval: form.recurrence_enabled
+        ? interval
+        : null,
+      recurrence_unit: form.recurrence_enabled
+        ? form.recurrence_unit
+        : null,
+      instruction_document_ids: selectedDocuments.map((item) => item.id),
+    };
+    const payload = isSuggestion
+      ? {
+          asset_id: Number(suggestionAssetId),
+          ...scheduleDetails,
+        }
+      : isSupervisor
+        ? {
+            ...scheduleDates,
+            ...(isEdit && !isStandaloneEdit && form.recurrence_enabled
+              ? {
+                  recurrence_interval: interval,
+                  recurrence_unit: form.recurrence_unit,
+                }
+              : {}),
+          }
       : {
-          title: form.title.trim(),
-          maintenance_type: form.maintenance_type,
-          priority: form.priority,
-          assigned_technician:
-            form.assigned_technician.trim() || null,
-          description: form.description.trim() || null,
-          ...scheduleDates,
-          recurrence_enabled: form.recurrence_enabled,
-          recurrence_interval: form.recurrence_enabled
-            ? interval
-            : null,
-          recurrence_unit: form.recurrence_enabled
-            ? form.recurrence_unit
-            : null,
-          instruction_document_ids: selectedDocuments.map((item) => item.id),
+          ...scheduleDetails,
         };
     const checklistItems = form.checklist
       .split(/\r?\n/)
@@ -382,7 +437,12 @@ export default function CreateMaintenanceSchedulePage() {
     setBusy(true);
 
     try {
-      if (isStandaloneEdit) {
+      if (isSuggestion) {
+        await api.post("/rule-template-requests", {
+          suggestion_type: "maintenance",
+          maintenance: payload,
+        });
+      } else if (isStandaloneEdit) {
         const recordPayload = isSupervisor
           ? {
               planned_start_at: utcDateTime(form.schedule_start_date),
@@ -417,14 +477,20 @@ export default function CreateMaintenanceSchedulePage() {
         });
       }
 
-      navigate(`/assets/${id}`, {
-        state: {
-          activeTab: "logbook",
-          createdNotice: isEdit
-            ? "Maintenance schedule updated."
-            : "Maintenance schedule created.",
-        },
-      });
+      if (isSuggestion) {
+        navigate("/configuration/rules", {
+          state: { maintenanceSuggestionSubmitted: true },
+        });
+      } else {
+        navigate(`/assets/${id}`, {
+          state: {
+            activeTab: "logbook",
+            createdNotice: isEdit
+              ? "Maintenance schedule updated."
+              : "Maintenance schedule created.",
+          },
+        });
+      }
     } catch (requestError) {
       console.error(
         "Maintenance schedule request failed:",
@@ -476,12 +542,18 @@ export default function CreateMaintenanceSchedulePage() {
           </p>
 
           <h1>
-            {isEdit ? "Edit maintenance" : "Add maintenance"}
+            {isSuggestion
+              ? "Suggest maintenance schedule"
+              : isEdit
+                ? "Edit maintenance"
+                : "Add maintenance"}
             </h1>
 
           <p className="create-schedule-subtitle">
-          {isSupervisor
-            ? "Update only the maintenance schedule dates. Other maintenance details are read-only."
+          {isSuggestion
+            ? "Submit a maintenance plan for Administrator review. It will not be scheduled until approved."
+            : isSupervisor
+            ? "Update schedule dates and the recurrence interval. Other maintenance details are read-only."
             : "Configure the maintenance plan, first due date and recurrence for this asset."}
           </p>
         </div>
@@ -496,9 +568,14 @@ export default function CreateMaintenanceSchedulePage() {
             {error}
           </div>
         )}
-        {!canManageMaintenance && (
+        {!canManageMaintenance && !isSuggestion && (
           <div className="notice" role="status">
             You do not have permission to create or edit maintenance schedules.
+          </div>
+        )}
+        {isSuggestion && !isSupervisor && (
+          <div className="notice" role="status">
+            Only Supervisors can submit maintenance suggestions.
           </div>
         )}
 
@@ -510,9 +587,35 @@ export default function CreateMaintenanceSchedulePage() {
           <>
             <fieldset
               className="create-schedule-fieldset"
-              disabled={busy || !canManageMaintenance || editingBlocked}
+              disabled={
+                busy ||
+                (isSuggestion ? !isSupervisor : !canManageMaintenance) ||
+                editingBlocked
+              }
             >
-              {!isSupervisor && <section className="create-schedule-section">
+              {isSuggestion && (
+                <section className="create-schedule-section">
+                  <h2>Asset</h2>
+                  <label className="field">
+                    <span className="field-label">
+                      Maintenance asset <span className="req" aria-hidden="true">*</span>
+                    </span>
+                    <select
+                      value={suggestionAssetId}
+                      onChange={(event) => setSuggestionAssetId(event.target.value)}
+                      required
+                    >
+                      <option value="">Select an asset</option>
+                      {suggestionAssets.map((asset) => (
+                        <option key={asset.id} value={asset.id}>
+                          {asset.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </section>
+              )}
+              {(!isSupervisor || isSuggestion) && <section className="create-schedule-section">
                 <h2>Schedule details</h2>
 
                 <p className="muted">
@@ -661,7 +764,7 @@ export default function CreateMaintenanceSchedulePage() {
                 <h2>Dates</h2>
 
                 <p className="muted">
-                  {isSupervisor
+                  {isSupervisor && !isSuggestion
                     ? "Supervisors may update only these schedule dates."
                     : "Select when the plan starts and when the first maintenance is due."}
                 </p>
@@ -707,24 +810,26 @@ export default function CreateMaintenanceSchedulePage() {
                 </div>
               </section>
 
-              {!isSupervisor && <section className="create-schedule-section">
+              {(!isSupervisor || isSuggestion || (isEdit && !isStandaloneEdit && form.recurrence_enabled)) && <section className="create-schedule-section">
                 <h2>Recurring maintenance</h2>
 
                 <p className="muted">
-                  Automatically plan repeated maintenance when
-                  recurrence is enabled.
+                  {isSupervisor && !isSuggestion
+                    ? "Changing this interval updates the next future occurrence; completed history remains unchanged."
+                    : "Automatically plan repeated maintenance when recurrence is enabled."}
                 </p>
 
-                <label className="field create-schedule-checkbox">
-                  <input
-                    type="checkbox"
-                    name="recurrence_enabled"
-                    checked={form.recurrence_enabled}
-                    onChange={updateField}
-                  />
-
-                  Enable recurring maintenance
-                </label>
+                {(!isSupervisor || isSuggestion) && (
+                  <label className="field create-schedule-checkbox">
+                    <input
+                      type="checkbox"
+                      name="recurrence_enabled"
+                      checked={form.recurrence_enabled}
+                      onChange={updateField}
+                    />
+                    Enable recurring maintenance
+                  </label>
+                )}
 
                 {form.recurrence_enabled && (
                   <div className="create-schedule-grid recurrence-grid">
@@ -764,7 +869,7 @@ export default function CreateMaintenanceSchedulePage() {
                 )}
               </section>}
 
-              {!isSupervisor && <section className="create-schedule-section">
+              {(!isSupervisor || isSuggestion) && <section className="create-schedule-section">
                 <h2>Description / work details</h2>
 
                 <p className="muted">
@@ -831,11 +936,15 @@ export default function CreateMaintenanceSchedulePage() {
               <button
                 type="submit"
                 className="btn-primary"
-                disabled={busy || !canManageMaintenance || editingBlocked}
+                disabled={
+                  busy ||
+                  (isSuggestion ? !isSupervisor : !canManageMaintenance) ||
+                  editingBlocked
+                }
                 title={
                   editingBlocked
                     ? "In-progress maintenance cannot be edited."
-                    : !canManageMaintenance
+                    : (isSuggestion ? !isSupervisor : !canManageMaintenance)
                       ? "You do not have permission to create or edit maintenance schedules."
                       : undefined
                 }
@@ -844,9 +953,11 @@ export default function CreateMaintenanceSchedulePage() {
                 ? isEdit
                 ? "Updating maintenance..."
                 : "Creating maintenance..."
-                : isEdit
-                ? "Save changes"
-                : "Add maintenance"}
+                : isSuggestion
+                  ? "Submit suggestion"
+                  : isEdit
+                    ? "Save changes"
+                    : "Add maintenance"}
               </button>
             </div>
           </>

@@ -14,6 +14,7 @@ import { useAuth } from "../../auth/AuthContext.jsx";
 import {
   CreateModal,
   EmptyState,
+  Modal,
   useConfirmation,
 } from "../../../components/common/UI.jsx";
 import "./RuleLibrary.css";
@@ -571,6 +572,8 @@ export default function RuleLibrary() {
   const [ruleRequests, setRuleRequests] = useState([]);
   const [requestsLoading, setRequestsLoading] = useState(false);
   const [reviewingId, setReviewingId] = useState(null);
+  const [requestStatus, setRequestStatus] = useState("pending");
+  const [suggestionChoiceOpen, setSuggestionChoiceOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [status, setStatus] = useState("all");
   const [modalOpen, setModalOpen] = useState(false);
@@ -585,14 +588,14 @@ export default function RuleLibrary() {
   };
 
 
-const loadPendingRequests = async () => {
+const loadPendingRequests = async (filterStatus = requestStatus) => {
   if (!isAdministrator) return;
 
   setRequestsLoading(true);
 
   try {
     const result = await api.get(
-      "/rule-template-requests?status=pending"
+      `/rule-template-requests?status=${filterStatus}`
     );
 
     setRuleRequests(Array.isArray(result) ? result : []);
@@ -609,6 +612,18 @@ const loadPendingRequests = async () => {
 };
 
 useEffect(() => {
+  if (location.state?.maintenanceSuggestionSubmitted) {
+    setMessage({
+      text: "Maintenance suggestion submitted for Administrator review.",
+      error: false,
+    });
+    navigate(location.pathname, {
+      replace: true,
+      state: {},
+    });
+    return;
+  }
+
   if (location.state?.openCreate) {
     if (canCreateRules) {
       setSuggesting(false);
@@ -627,6 +642,10 @@ useEffect(() => {
   navigate,
   canCreateRules,
 ]);
+
+useEffect(() => {
+  loadPendingRequests(requestStatus);
+}, [requestStatus, isAdministrator]);
 
   useEffect(() => {
     let alive = true;
@@ -802,7 +821,9 @@ const reviewRequest = async (request, action) => {
     setMessage({
       text:
         action === "approve"
-          ? `Suggestion "${request.name}" approved and added to the rule library.`
+          ? request.suggestion_type === "maintenance"
+            ? `Maintenance suggestion "${request.name}" approved and scheduled.`
+            : `Suggestion "${request.name}" approved and added to the rule library.`
           : `Suggestion "${request.name}" declined.`,
       error: false,
     });
@@ -884,9 +905,7 @@ const reviewRequest = async (request, action) => {
       type="button"
       className="btn-primary"
       onClick={() => {
-        setSuggesting(true);
-        setEditing(null);
-        setModalOpen(true);
+        setSuggestionChoiceOpen(true);
       }}
     >
       <Plus size={17} />
@@ -902,16 +921,26 @@ const reviewRequest = async (request, action) => {
   <section className="rule-library-panel pending-suggestions">
     <div className="rule-library-tools">
       <div>
-        <h2>Pending Suggestions</h2>
+        <h2>Suggestions</h2>
         <p className="muted">
-          Review monitoring rules suggested by Supervisors.
+          Review monitoring-rule and maintenance suggestions from Supervisors.
         </p>
       </div>
 
+      <select
+        aria-label="Filter suggestions by review status"
+        value={requestStatus}
+        onChange={(event) => setRequestStatus(event.target.value)}
+        disabled={requestsLoading || reviewingId !== null}
+      >
+        <option value="pending">Pending</option>
+        <option value="approved">Approved</option>
+        <option value="declined">Declined</option>
+      </select>
       <button
         type="button"
         className="btn-outline"
-        onClick={loadPendingRequests}
+        onClick={() => loadPendingRequests(requestStatus)}
         disabled={requestsLoading || reviewingId !== null}
       >
         {requestsLoading ? "Refreshing…" : "Refresh"}
@@ -925,9 +954,9 @@ const reviewRequest = async (request, action) => {
     ) : ruleRequests.length === 0 ? (
       <EmptyState
         art={false}
-        title="No pending suggestions"
+        title={`No ${requestStatus} suggestions`}
         lines={[
-          "New suggestions submitted by Supervisors will appear here.",
+          "Suggestions submitted by Supervisors will appear here.",
         ]}
       />
     ) : (
@@ -944,8 +973,15 @@ const reviewRequest = async (request, action) => {
             <div className="rule-library-card-main">
               <div className="rule-library-card-title">
                 <h2>{request.name}</h2>
-                <span className="rule-library-status disabled">
-                  Pending
+                <span className={`rule-library-status ${request.status === "approved" ? "available" : "disabled"}`}>
+                  {request.status === "pending"
+                    ? "Pending"
+                    : request.status[0].toUpperCase() + request.status.slice(1)}
+                </span>
+                <span className="rule-library-status">
+                  {request.suggestion_type === "maintenance"
+                    ? "Maintenance Suggestion"
+                    : "Monitoring Rule Suggestion"}
                 </span>
               </div>
 
@@ -954,20 +990,33 @@ const reviewRequest = async (request, action) => {
                   "No description provided."}
               </p>
 
-              <small>
-                {displayType(request)} · {templateSummary(request)}
-              </small>
-
-              <p>
-                <strong>Severity:</strong>{" "}
-                {request.severity}
-              </p>
-
-              {request.variable_key && (
-                <p>
-                  <strong>Preferred variable:</strong>{" "}
-                  {request.variable_key}
-                </p>
+              {request.suggestion_type === "maintenance" ? (
+                <div className="rule-maintenance-suggestion-details">
+                  <p><strong>Asset:</strong> {request.maintenance_asset_name || `Asset ${request.maintenance_details?.asset_id || "—"}`}</p>
+                  <p><strong>Type / priority:</strong> {request.maintenance_details?.maintenance_type || "—"} · {request.maintenance_details?.priority || "—"}</p>
+                  <p><strong>Assigned technician:</strong> {request.maintenance_details?.assigned_technician || "Unassigned"}</p>
+                  <p><strong>Schedule start:</strong> {request.maintenance_details?.schedule_start_date || "—"}</p>
+                  <p><strong>First due:</strong> {request.maintenance_details?.first_due_date || "—"}</p>
+                  <p><strong>Recurrence:</strong> {request.maintenance_details?.recurrence_enabled
+                    ? `Every ${request.maintenance_details.recurrence_interval} ${request.maintenance_details.recurrence_unit}`
+                    : "Disabled"}</p>
+                  {request.maintenance_details?.instruction_document_ids?.length > 0 && (
+                    <p><strong>Instruction documents:</strong> {request.maintenance_details.instruction_document_ids.join(", ")}</p>
+                  )}
+                  {request.maintenance_details?.description && (
+                    <p><strong>Work details:</strong> {request.maintenance_details.description}</p>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <small>
+                    {displayType(request)} · {templateSummary(request)}
+                  </small>
+                  <p><strong>Severity:</strong> {request.severity}</p>
+                  {request.variable_key && (
+                    <p><strong>Preferred variable:</strong> {request.variable_key}</p>
+                  )}
+                </>
               )}
 
               {request.created_at && (
@@ -978,9 +1027,18 @@ const reviewRequest = async (request, action) => {
                   ).toLocaleString()}
                 </small>
               )}
+              {request.requested_by_name && (
+                <small>Submitted by: {request.requested_by_name}</small>
+              )}
+              {request.reviewed_at && (
+                <small>
+                  Reviewed by {request.reviewed_by_name || `user ${request.reviewed_by}`} on{" "}
+                  {new Date(request.reviewed_at).toLocaleString()}
+                </small>
+              )}
             </div>
 
-            <div className="rule-library-actions">
+            {request.status === "pending" && <div className="rule-library-actions">
               <button
                 type="button"
                 className="btn-primary"
@@ -991,7 +1049,9 @@ const reviewRequest = async (request, action) => {
               >
                 {reviewingId === request.id
                   ? "Processing…"
-                  : "Approve"}
+                  : request.suggestion_type === "maintenance"
+                    ? "Approve and create schedule"
+                    : "Approve"}
               </button>
 
               <button
@@ -1004,7 +1064,7 @@ const reviewRequest = async (request, action) => {
               >
                 Decline
               </button>
-            </div>
+            </div>}
           </article>
         ))}
       </div>
@@ -1044,6 +1104,43 @@ const reviewRequest = async (request, action) => {
         )}
       </section>
      
+{suggestionChoiceOpen && (
+  <Modal
+    title="Suggest a new rule"
+    onClose={() => setSuggestionChoiceOpen(false)}
+  >
+    <p className="muted">
+      Choose what you want to suggest for Administrator review.
+    </p>
+    <div className="rule-suggestion-choice-list">
+      <button
+        type="button"
+        className="btn-outline"
+        onClick={() => {
+          setSuggestionChoiceOpen(false);
+          setSuggesting(true);
+          setEditing(null);
+          setModalOpen(true);
+        }}
+      >
+        <Activity size={17} />
+        New Monitoring Rule
+      </button>
+      <button
+        type="button"
+        className="btn-outline"
+        onClick={() => {
+          setSuggestionChoiceOpen(false);
+          navigate("/maintenance/suggest");
+        }}
+      >
+        <Plus size={17} />
+        New Maintenance Rule
+      </button>
+    </div>
+  </Modal>
+)}
+
 {modalOpen && (
   <CreateModal
     title={

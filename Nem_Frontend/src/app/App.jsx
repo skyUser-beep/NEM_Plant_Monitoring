@@ -114,9 +114,14 @@ export default function App() {
 
 {/* Maintenance */}
 <Route
-  path="/assets/:id/maintenance/schedules/new"
+          path="/maintenance/suggest"
   element={<CreateMaintenanceSchedulePage />}
 />
+
+        <Route
+          path="/assets/:id/maintenance/schedules/new"
+          element={<CreateMaintenanceSchedulePage />}
+        />
 
 <Route
   path="/assets/:id/maintenance/schedules/:scheduleId/edit"
