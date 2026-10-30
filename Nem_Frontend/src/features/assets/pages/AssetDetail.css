@@ -378,6 +378,18 @@
   font-size: 12px;
 }
 
+.asset-page .maintenance-notes-table th:last-child,
+.asset-page .maintenance-notes-table td:last-child {
+  width: 1%;
+  white-space: nowrap;
+}
+
+.asset-page .maintenance-log-actions {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+}
+
 .asset-page .maintenance-log-notes-head,
 .asset-page .event-log-heading {
   display: flex;

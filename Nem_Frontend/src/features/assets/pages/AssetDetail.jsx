@@ -1,4 +1,4 @@
-﻿
+
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLocation, useNavigate, useOutletContext, useParams } from "react-router-dom";
 import { Download, Eye, Pencil, Trash2 } from "lucide-react";
@@ -2560,7 +2560,7 @@ const filteredEvents = [...events]
                 </td>
 
                 <td>
-                  <div className="maintenance-actions">
+                  <div className="maintenance-log-actions">
                     <button
                       type="button"
                       className="icon-outline sm"
@@ -2578,7 +2578,7 @@ const filteredEvents = [...events]
                       <DotsIcon size={17} />
                     </button>
                     {ruleActionMenuId === `maintenance-log-${entry.id}` && (
-                      <FloatingMenu align="right" role="menu">
+                      <FloatingMenu role="menu">
                         <button
                           type="button"
                           className="rule-action-menu-item rule-action-menu-item--view"
