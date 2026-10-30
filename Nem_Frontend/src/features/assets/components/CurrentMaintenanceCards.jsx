@@ -10,6 +10,7 @@ import {
   useConfirmation,
 } from "../../../components/common/UI.jsx";
 import { formatTime } from "../../../utils/format.js";
+import MaintenanceDetails from "./MaintenanceDetails.jsx";
 import { DotsIcon } from "../../../components/common/Icons.jsx";
 import "./MaintenancePanel.css";
 
@@ -27,6 +28,7 @@ function displayDate(value) {
 
 export default function CurrentMaintenanceCards({
   assetId,
+  refreshKey = 0,
   onChanged,
   onCompleted,
   onCompletedRecordsCount,
@@ -184,7 +186,7 @@ const openEdit = (record) => {
 
   useEffect(() => {
     loadCurrentMaintenance();
-  }, [loadCurrentMaintenance]);
+  }, [loadCurrentMaintenance, refreshKey]);
 
   useEffect(() => {
     if (actionMenuRecordId === null) return undefined;
@@ -498,113 +500,7 @@ const openEdit = (record) => {
           onClose={() => setSelectedRecord(null)}
           wide
         >          
-<div className="maintenance-detail-view">
-  <div className="maintenance-detail-hero">
-    <div className="maintenance-detail-symbol" aria-hidden="true">
-      <span>⚙</span>
-    </div>
-    <div className="maintenance-detail-hero-copy">
-      <span className="maintenance-detail-eyebrow">
-        MAINTENANCE RECORD
-      </span>
-      <h3>{selectedRecord.title || "Untitled maintenance"}</h3>
-      <p>
-        {String(selectedRecord.maintenance_type || "maintenance")
-          .replaceAll("_", " ")}
-        {" · "}
-        {selectedRecord.priority || "medium"} priority
-      </p>
-    </div>
-    <span
-      className={`maintenance-detail-status maintenance-detail-status--${String(
-        selectedRecord.status || "planned"
-      ).replaceAll("_", "-")}`}
-    >
-      {String(selectedRecord.status || "planned").replaceAll("_", " ")}
-    </span>
-  </div>
-
-  <div className="maintenance-detail-content">
-    <section className="maintenance-detail-section">
-      <h4>GENERAL INFORMATION</h4>
-      <div className="maintenance-detail-grid">
-        <div className="maintenance-detail-field">
-          <span>Maintenance type</span>
-          <strong>
-            {selectedRecord.maintenance_type || "—"}
-          </strong>
-        </div>
-        <div className="maintenance-detail-field">
-          <span>Priority</span>
-          <strong>{selectedRecord.priority || "Medium"}</strong>
-        </div>
-        <div className="maintenance-detail-field">
-          <span>Assigned technician</span>
-          <strong>
-            {selectedRecord.assigned_technician || "—"}
-          </strong>
-        </div>
-        <div className="maintenance-detail-field">
-          <span>Due date</span>
-          <strong>
-            {displayDate(selectedRecord.planned_due_date)}
-          </strong>
-        </div>
-      </div>
-    </section>
-
-    <section className="maintenance-detail-section">
-      <h4>SCHEDULE & EXECUTION</h4>
-      <div className="maintenance-detail-timeline">
-        <div className="maintenance-detail-time">
-          <span className="maintenance-detail-time-dot planned" />
-          <div>
-            <span>Planned start</span>
-            <strong>
-              {formatTime(selectedRecord.planned_start_at)}
-            </strong>
-          </div>
-        </div>
-        <div className="maintenance-detail-time">
-          <span className="maintenance-detail-time-dot planned" />
-          <div>
-            <span>Planned end</span>
-            <strong>
-              {formatTime(selectedRecord.planned_end_at)}
-            </strong>
-          </div>
-        </div>
-        <div className="maintenance-detail-time">
-          <span className="maintenance-detail-time-dot actual" />
-          <div>
-            <span>Actual start</span>
-            <strong>
-              {formatTime(selectedRecord.actual_started_at)}
-            </strong>
-          </div>
-        </div>
-        <div className="maintenance-detail-time">
-          <span className="maintenance-detail-time-dot actual" />
-          <div>
-            <span>Actual completion</span>
-            <strong>
-              {formatTime(selectedRecord.actual_completed_at)}
-            </strong>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section className="maintenance-detail-section">
-      <h4>WORK DETAILS</h4>
-      <div className="maintenance-detail-notes">
-        {selectedRecord.completion_notes ||
-          selectedRecord.notes ||
-          "No work details provided."}
-      </div>
-    </section>
-  </div>
-</div>
+          <MaintenanceDetails record={selectedRecord} now={clockNow} />
           <div className="modal-actions">
             {selectedRecord.status === "in_progress" && (
               <button

@@ -46,7 +46,7 @@ class LoginResponse(BaseModel):
 _INDIAN_PHONE_REGEX = re.compile(r"^(\+91|91|0)?[6-9]\d{9}$")
 _EMAIL_REGEX = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
 
-
+#Check the phone number format and normalize it to a standard 10-digit format
 def _normalize_phone(value: str) -> str:
     digits = re.sub(r"\D", "", value)
     if digits.startswith("91") and len(digits) == 12:
@@ -55,7 +55,7 @@ def _normalize_phone(value: str) -> str:
         return digits[1:]
     return digits
 
-
+# Validate the phone number format and raise an error if it is invalid.
 def _validate_phone(value: str | None) -> str | None:
     if value is None:
         return None
@@ -66,6 +66,7 @@ def _validate_phone(value: str | None) -> str | None:
         raise ValueError("Invalid phone number. Enter a valid 10-digit Indian mobile number " "(optionally prefixed with +91).")
     return _normalize_phone(trimmed)
 
+# Validate the email address format and raise an error if it is invalid.
 def _validate_email(value: str | None) -> str | None:
     if value is None:
         return None
@@ -95,7 +96,7 @@ class UserCreate(BaseModel):
     def validate_email_address(cls, value: str | None) -> str | None:
         return _validate_email(value)
 
-#Username normalization to case-insensitive form.
+# Username normalization to case-insensitive form.
     @field_validator("username")
     @classmethod
     def normalize_username(cls, value: str) -> str:
@@ -103,7 +104,7 @@ class UserCreate(BaseModel):
         if not value:
             raise ValueError("Username cannot be empty")
         return value
-#This model allow administrator to change a user`s role,active status, contact details or password`
+# This model allow administrator to change a user`s role,active status, contact details or password`
 class UserUpdate(BaseModel):
     role: Literal["Administrator", "Supervisor", "Operator"] | None = None
     is_active: bool | None = None
@@ -121,7 +122,7 @@ class UserUpdate(BaseModel):
     def validate_email_address(cls, value: str | None) -> str | None:
         return _validate_email(value)
 
-
+#Updating the password.
 class PasswordChangeRequest(BaseModel):
     current_password: str = Field(min_length=1, max_length=1024)
     new_password: str = Field(min_length=6, max_length=1024)

@@ -1,4 +1,6 @@
 #FastApi router that connects your react frontend to your backend and postgreSQL database
+
+# React Frontend <-> FASTAPI router(this file) <-> POSTGRESQL database
 from datetime import datetime, timezone
 from html import escape
 import json
@@ -546,9 +548,7 @@ def _validate_template_collection(
             return
         if session.get(RuleCollection, collection_id) is None:
             raise HTTPException(status_code=404, detail="Rule collection was not found")
-        query = select(func.count()).select_from(MonitoringRuleTemplate).where(
-            MonitoringRuleTemplate.collection_id == collection_id
-        )
+        query = select(func.count()).select_from(MonitoringRuleTemplate).where(MonitoringRuleTemplate.collection_id == collection_id)
         if excluded_template_id is not None:
             query = query.where(MonitoringRuleTemplate.id != excluded_template_id)
         if (session.scalar(query) or 0) >= 5:
@@ -603,10 +603,7 @@ def submit_rule_template_request(
     user = _authenticated_user(request, session)
 
     if user.role != "Supervisor":
-        raise HTTPException(
-            status_code=403,
-            detail="Only Supervisors can suggest reusable monitoring rules",
-        )
+        raise HTTPException(status_code=403,detail="Only Supervisors can suggest reusable monitoring rules",)
 
     _validate_template_collection(session, payload.collection_id)
 
@@ -631,10 +628,7 @@ def list_rule_template_requests(
     user = _authenticated_user(request, session)
 
     if user.role != "Administrator":
-        raise HTTPException(
-            status_code=403,
-            detail="Only Administrators can review rule suggestions",
-        )
+        raise HTTPException(status_code=403,detail="Only Administrators can review rule suggestions",)
 
     query = select(MonitoringRuleTemplateRequest)
 
@@ -930,9 +924,7 @@ def frontend_predefined_rules(
         )
         mapped = _suggested_template_variable(template, candidates)
         definition = None
-        mapping_required = bool(
-            template.required_variable_types and candidates and mapped is None
-        )
+        mapping_required = bool(template.required_variable_types and candidates and mapped is None)
         try:
             if not template.is_enabled:
                 raise HTTPException(status_code=422,detail=f"Rule template '{template.name}' is disabled",)
@@ -952,14 +944,12 @@ def frontend_predefined_rules(
                     else None
                 )
                 if is_mapping_bypass_enabled(request) and required_role:
-                    raise HTTPException(status_code=422,
-                        detail=(
+                    raise HTTPException(status_code=422,detail=(
                             f"Set an active Boolean variable's purpose to "
                             f"'{required_role}' in the asset's Variables panel"
                         ),
                     )
-                raise HTTPException(status_code=422,
-                    detail=(
+                raise HTTPException(status_code=422,detail=(
                         f"No active compatible variable is available for "
                         f"'{template.name}' on the target asset"
                     ),

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import Any, Callable
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -320,6 +320,7 @@ def _transition_state(
     condition_started_at: datetime | None,
     error_message: str | None = None,
     threshold: Decimal | None = None,
+    allow_new_occurrence: bool = False,
 ) -> RuleState:
     if state is None:
         state = RuleState(
@@ -360,7 +361,16 @@ def _transition_state(
     )
 
     if next_status in {"warning", "alert"}:
-        if alert is None:
+        can_create_alert = alert is not None or (
+            allow_new_occurrence
+            or _is_new_alert_occurrence(
+                session,
+                rule,
+                asset,
+                previous_status=previous_status,
+            )
+        )
+        if alert is None and can_create_alert:
             alert = Alert(
                 rule_id=rule.id,
                 target_asset_id=asset.id,
@@ -377,7 +387,7 @@ def _transition_state(
             session.add(alert)
             session.flush()
             enqueue_alert_notifications(session, alert, asset, rule)
-        else:
+        elif alert is not None:
             if alert.severity != next_status:
                 previous_severity = alert.severity
                 alert.severity = next_status
@@ -404,7 +414,7 @@ def _transition_state(
             alert.threshold = threshold
             alert.last_updated_at = evaluated_at
 
-        if transitioned:
+        if transitioned and alert is not None:
             emit_event(
                 session,
                 event_type=(
@@ -483,6 +493,49 @@ def _transition_state(
             metadata={"reason": error_message},
         )
     return state
+
+
+def _is_new_alert_occurrence(
+    session: Session,
+    rule: MonitoringRule,
+    asset: Asset,
+    *,
+    previous_status: str,
+) -> bool:
+    if previous_status in {"warning", "alert"}:
+        return False
+    if previous_status == "normal":
+        return True
+
+    previous_alert_exists = session.scalar(
+        select(Alert.id)
+        .where(
+            Alert.rule_id == rule.id,
+            Alert.target_asset_id == asset.id,
+        )
+        .limit(1)
+    )
+    if previous_alert_exists is None:
+        return True
+
+    last_completion = session.scalar(
+        select(func.max(MonitoringEvent.occurred_at)).where(
+            MonitoringEvent.event_type == "alert_completed",
+            MonitoringEvent.rule_id == rule.id,
+            MonitoringEvent.asset_id == asset.id,
+        )
+    )
+    if last_completion is None:
+        return True
+
+    last_reset = session.scalar(
+        select(func.max(MonitoringEvent.occurred_at)).where(
+            MonitoringEvent.event_type == "condition_returned_to_normal",
+            MonitoringEvent.rule_id == rule.id,
+            MonitoringEvent.asset_id == asset.id,
+        )
+    )
+    return last_reset is not None and last_reset > last_completion
 
 def evaluate_boolean_count_threshold(
     session: Session,
@@ -901,6 +954,7 @@ def evaluate_interval_elapsed(
             message=message,
             evaluated_at=evaluated_at,
             condition_started_at=anchor,
+            allow_new_occurrence=True,
         )
         if previous_periods > 0:
             alert = session.scalar(

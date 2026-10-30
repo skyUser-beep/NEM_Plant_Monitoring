@@ -62,8 +62,7 @@ def to_tree(session: Session, asset: Asset, ancestors: frozenset[int] = frozense
         raise HTTPException(status_code=409, detail="Existing asset hierarchy contains a cycle")
     next_ancestors = ancestors | {asset.id}
     children = session.scalars(select(Asset).where(Asset.parent_asset_id == asset.id).order_by(Asset.id)).all()
-    return AssetTree(
-        **AssetRead.model_validate(asset).model_dump(),
+    return AssetTree(**AssetRead.model_validate(asset).model_dump(),
         children=[to_tree(session, child, next_ancestors) for child in children],
     )
 

@@ -12,6 +12,7 @@ import {
 } from "../../../services/liveUpdates.js";
 import AssetSupervisors from "../components/AssetSupervisors.jsx";
 import CurrentMaintenanceCards from "../components/CurrentMaintenanceCards.jsx";
+import MaintenanceDetails from "../components/MaintenanceDetails.jsx";
 import MaintenancePanel from "../components/MaintenancePanel.jsx";
 import "./AssetDetail.css";
 import {
@@ -587,6 +588,7 @@ export default function AssetDetail() {
   const [list, setList] = useState("activated");
   const [rules, setRules] = useState([]);
   const [completedMaintenanceCount, setCompletedMaintenanceCount] = useState(0);
+  const [maintenanceRefreshKey, setMaintenanceRefreshKey] = useState(0);
   const rulesRef = useRef(rules);
   rulesRef.current = rules;
   const [variables, setVariables] = useState([]);
@@ -633,6 +635,9 @@ export default function AssetDetail() {
   const [selectedEntry, setSelectedEntry] = useState(null);
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [showEventDetails, setShowEventDetails] = useState(false);
+  const [maintenanceEventRecord, setMaintenanceEventRecord] = useState(null);
+  const [maintenanceEventLoading, setMaintenanceEventLoading] = useState(false);
+  const [maintenanceEventError, setMaintenanceEventError] = useState("");
   const [deletingEventId, setDeletingEventId] = useState(null);
   const [eventDeleteError, setEventDeleteError] = useState("");
   const [deletingLogId, setDeletingLogId] = useState(null);
@@ -645,6 +650,45 @@ export default function AssetDetail() {
   const plcStatusSeq = useRef(0);
   const bulkRequest = useRef(false);
   const permanentDeleteRequest = useRef(false);
+
+  const maintenanceEventRecordId = Number(
+    selectedEvent?.metadata?.maintenance_record_id
+  );
+  useEffect(() => {
+    if (
+      !showEventDetails ||
+      !Number.isInteger(maintenanceEventRecordId) ||
+      maintenanceEventRecordId <= 0
+    ) {
+      setMaintenanceEventRecord(null);
+      setMaintenanceEventLoading(false);
+      setMaintenanceEventError("");
+      return undefined;
+    }
+
+    let active = true;
+    setMaintenanceEventRecord(null);
+    setMaintenanceEventLoading(true);
+    setMaintenanceEventError("");
+    api.get(`/maintenance/${maintenanceEventRecordId}`)
+      .then((record) => {
+        if (active) setMaintenanceEventRecord(record);
+      })
+      .catch((error) => {
+        if (active) {
+          setMaintenanceEventError(
+            error.message || "Could not load the related maintenance record."
+          );
+        }
+      })
+      .finally(() => {
+        if (active) setMaintenanceEventLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [maintenanceEventRecordId, showEventDetails]);
 
   useEffect(() => {
     if (!menu && !sortMenu && ruleActionMenuId === null) return undefined;
@@ -859,6 +903,7 @@ export default function AssetDetail() {
   );
 
   const refreshMaintenanceData = useCallback(async () => {
+    setMaintenanceRefreshKey((current) => current + 1);
     await Promise.all([refreshStatus?.(), loadLogs()]);
   }, [loadLogs, refreshStatus]);
 
@@ -2411,6 +2456,7 @@ const filteredEvents = [...events]
           )}
           <CurrentMaintenanceCards
             assetId={assetId}
+            refreshKey={maintenanceRefreshKey}
             onChanged={refreshMaintenanceData}
             onCompletedRecordsCount={setCompletedMaintenanceCount}
             onCompleted={() => setList("not_activated")}
@@ -2856,7 +2902,7 @@ const filteredEvents = [...events]
 
 {showEventDetails && selectedEvent && (
   <Modal
-    title="Event Details"
+    title={maintenanceEventRecordId > 0 ? "Maintenance details" : "Event Details"}
     onClose={() => {
       setShowEventDetails(false);
       setSelectedEvent(null);
@@ -2866,6 +2912,15 @@ const filteredEvents = [...events]
         {eventDeleteError && (
           <p className="event-log-error" role="alert">{eventDeleteError}</p>
         )}
+        {maintenanceEventError && (
+          <p className="event-log-error" role="alert">{maintenanceEventError}</p>
+        )}
+        {maintenanceEventLoading ? (
+          <p role="status">Loading maintenance details…</p>
+        ) : maintenanceEventRecord ? (
+          <MaintenanceDetails record={maintenanceEventRecord} />
+        ) : (
+          <>
         <p>
           <strong>Date &amp; Time:</strong>{" "}
           {(selectedEvent.time || selectedEvent.occurred_at)
@@ -2933,6 +2988,8 @@ const filteredEvents = [...events]
               ? `Rule #${selectedEvent.rule_id}`
               : "Not assigned")}
         </p>
+          </>
+        )}
         <div className="event-details-actions">
           <button
             type="button"
@@ -3217,106 +3274,14 @@ const filteredEvents = [...events]
 
 {tab === "logbook" && modal === "view" && selectedEntry && (
   <Modal
-    title="Maintenance Logbook Entry"
+    title="Maintenance details"
     onClose={() => {
       setModal(null);
       setSelectedEntry(null);
     }}
     wide
   >
-    <dl className="rule-detail-grid">
-      <div>
-        <dt>Date and time</dt>
-        <dd>
-          {selectedEntry.time || selectedEntry.created_at
-            ? formatTime(selectedEntry.time || selectedEntry.created_at)
-            : "—"}
-        </dd>
-      </div>
-
-      <div>
-        <dt>Entry</dt>
-        <dd>
-          {selectedEntry.text ||
-            selectedEntry.title ||
-            selectedEntry.summary ||
-            "—"}
-        </dd>
-      </div>
-
-      <div>
-        <dt>Entry type</dt>
-        <dd>{selectedEntry.maintenance_type || "Note"}</dd>
-      </div>
-
-      <div>
-        <dt>Technician</dt>
-        <dd>{selectedEntry.assigned_technician || "—"}</dd>
-      </div>
-
-      <div>
-        <dt>Priority</dt>
-        <dd>{selectedEntry.priority || "—"}</dd>
-      </div>
-
-      <div>
-        <dt>Actual start</dt>
-        <dd>{selectedEntry.actual_started_at ? formatTime(selectedEntry.actual_started_at) : "—"}</dd>
-      </div>
-
-      <div>
-        <dt>Actual completion</dt>
-        <dd>{selectedEntry.actual_completed_at ? formatTime(selectedEntry.actual_completed_at) : "—"}</dd>
-      </div>
-
-      <div>
-        <dt>Actual duration</dt>
-        <dd>
-          {Number.isFinite(selectedEntry.actual_duration_seconds)
-            ? formatDuration(selectedEntry.actual_duration_seconds)
-            : "—"}
-        </dd>
-      </div>
-
-      {selectedEntry.notes && (
-        <div>
-          <dt>Notes</dt>
-          <dd>{selectedEntry.notes}</dd>
-        </div>
-      )}
-
-      {selectedEntry.completion_notes && (
-        <div>
-          <dt>Completion notes</dt>
-          <dd>{selectedEntry.completion_notes}</dd>
-        </div>
-      )}
-
-      {selectedEntry.parts_used && (
-        <div>
-          <dt>Parts used</dt>
-          <dd>{selectedEntry.parts_used}</dd>
-        </div>
-      )}
-
-      {Array.isArray(selectedEntry.checklist) && selectedEntry.checklist.length > 0 && (
-        <div>
-          <dt>Checklist</dt>
-          <dd>
-            {selectedEntry.checklist
-              .map((item) => `${item.completed ? "Complete" : "Incomplete"}: ${item.item}`)
-              .join(", ")}
-          </dd>
-        </div>
-      )}
-
-      {selectedEntry.id != null && (
-        <div>
-          <dt>Entry ID</dt>
-          <dd>{selectedEntry.id}</dd>
-        </div>
-      )}
-    </dl>
+    <MaintenanceDetails record={selectedEntry} />
 
     <div className="modal-actions">
       <button

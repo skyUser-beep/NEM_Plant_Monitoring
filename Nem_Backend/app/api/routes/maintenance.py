@@ -334,8 +334,7 @@ def create_maintenance_record(
         if status_value == "completed":
             actual_completed_at = actual_completed_at or now
 
-    performed_at = (
-        actual_completed_at
+    performed_at = (actual_completed_at
         if status_value == "completed"
         else payload.performed_at or now
     )
@@ -352,9 +351,7 @@ def create_maintenance_record(
         performed_at=performed_at,
         next_due_at=payload.next_due_at,
         planned_due_date=payload.due_date,
-        maintenance_type=(
-            "inspection" if legacy_record else payload.maintenance_type
-        ),
+        maintenance_type=("inspection" if legacy_record else payload.maintenance_type),
         status=status_value,
         planned_start_at=payload.planned_start_at,
         planned_end_at=payload.planned_end_at,
@@ -394,10 +391,7 @@ def create_maintenance_schedule(
     session: Session = Depends(get_db),
 ) -> MaintenanceScheduleRead:
     if session.get(Asset, payload.asset_id) is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Asset {payload.asset_id} was not found",
-        )
+        raise HTTPException(status_code=404,detail=f"Asset {payload.asset_id} was not found",)
     schedule = MaintenanceSchedule(
         asset_id=payload.asset_id,
         title=payload.title,
@@ -532,11 +526,7 @@ def permanently_delete_maintenance_schedule(
             "deleted_occurrence_ids": deleted_occurrence_ids,
         },
     )
-    _commit_deletion(
-        session,
-        "Related maintenance history prevents deleting this schedule.",
-    )
-
+    _commit_deletion(session,"Related maintenance history prevents deleting this schedule.",)
 
 # User can change selected fields without sending the entire schedule again.
 @router.patch("/schedules/{schedule_id}", response_model=MaintenanceScheduleRead)
@@ -547,11 +537,9 @@ def update_maintenance_schedule(schedule_id: int,payload: MaintenanceScheduleUpd
         .with_for_update()
     )
     if schedule is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Maintenance schedule {schedule_id} was not found",
-        )
+        raise HTTPException(status_code=404,detail=f"Maintenance schedule {schedule_id} was not found",)
 
+    current_occurrence = None
     if schedule.current_occurrence_id is not None:
         current_occurrence = session.scalar(
             select(MaintenanceRecord)
@@ -559,10 +547,7 @@ def update_maintenance_schedule(schedule_id: int,payload: MaintenanceScheduleUpd
             .with_for_update()
         )
         if current_occurrence is not None and current_occurrence.status == "in_progress":
-            raise HTTPException(
-                status_code=409,
-                detail="In-progress maintenance cannot be edited.",
-            )
+            raise HTTPException(status_code=409,detail="In-progress maintenance cannot be edited.",)
 
     changes = payload.model_dump(exclude_unset=True)
     if not changes:
@@ -618,11 +603,27 @@ def update_maintenance_schedule(schedule_id: int,payload: MaintenanceScheduleUpd
     for field, value in changes.items():
         setattr(schedule, field, value)
 
-    if "assigned_technician" in changes and schedule.current_occurrence_id is not None:
-        current_occurrence = session.get(MaintenanceRecord,schedule.current_occurrence_id,)
-        if current_occurrence is not None and current_occurrence.status == "planned":
-            current_occurrence.assigned_technician = schedule.assigned_technician
-            current_occurrence.performed_by = (schedule.assigned_technician or "Unassigned")
+    if current_occurrence is not None and current_occurrence.status == "planned":
+        occurrence_fields = {
+            "title": "summary",
+            "maintenance_type": "maintenance_type",
+            "priority": "priority",
+            "assigned_technician": "assigned_technician",
+            "description": "notes",
+        }
+        for schedule_field, occurrence_field in occurrence_fields.items():
+            if schedule_field in changes:
+                setattr(
+                    current_occurrence,
+                    occurrence_field,
+                    schedule.title if schedule_field == "title"
+                    else schedule.description if schedule_field == "description"
+                    else getattr(schedule, schedule_field),
+                )
+        if "assigned_technician" in changes:
+            current_occurrence.performed_by = (
+                schedule.assigned_technician or "Unassigned"
+            )
 
     if "schedule_start_date" in changes and schedule.last_completed_at is None:
         schedule.current_period_start_date = schedule.schedule_start_date
@@ -659,16 +660,8 @@ def update_maintenance_schedule(schedule_id: int,payload: MaintenanceScheduleUpd
             raise HTTPException(status_code=409,detail="The first due date can only change before maintenance starts",)
 
         occurrence.planned_due_date = schedule.first_due_date
-        occurrence.planned_start_at = datetime.combine(
-            schedule.first_due_date,
-            time.min,
-            tzinfo=timezone.utc,
-        )
-        occurrence.planned_end_at = datetime.combine(
-            schedule.first_due_date,
-            time.max,
-            tzinfo=timezone.utc,
-        )
+        occurrence.planned_start_at = datetime.combine(schedule.first_due_date,time.min,tzinfo=timezone.utc,)
+        occurrence.planned_end_at = datetime.combine(schedule.first_due_date,time.max,tzinfo=timezone.utc,)
         schedule.current_period_start_date = schedule.schedule_start_date
         if previous_due_date is not None:
             alerts = session.scalars(
