@@ -6,7 +6,12 @@ import {
   createLiveUpdateScheduler,
   subscribeLiveUpdates,
 } from "../../../services/liveUpdates.js";
-import { formatDuration, formatValue, timeAgo } from "../../../utils/format.js";
+import {
+  formatDuration,
+  formatTime,
+  formatValue,
+  timeAgo,
+} from "../../../utils/format.js";
 import { EmptyState, Modal } from "../../../components/common/UI.jsx";
 import { CheckIcon } from "../../../components/common/Icons.jsx";
 
@@ -46,7 +51,9 @@ export default function Home() {
   const [error, setError] = useState("");
   const [ackError, setAckError] = useState("");
   const [busyId, setBusyId] = useState(null);
-  const [alertToAcknowledge, setAlertToAcknowledge] = useState(null);
+  const [alertAction, setAlertAction] = useState(null);
+  const [evaluatedAlerts, setEvaluatedAlerts] = useState([]);
+  const [evaluatedAlertsError, setEvaluatedAlertsError] = useState("");
 
   const loadSummary = useCallback(async () => {
     try {
@@ -67,10 +74,40 @@ export default function Home() {
     }
   }, []);
 
+  const loadEvaluatedAlerts = useCallback(async () => {
+    try {
+      const [completed, resolved] = await Promise.all([
+        api.get("/events?event_type=alert_completed&limit=20&offset=0"),
+        api.get("/events?event_type=alert_resolved&limit=20&offset=0"),
+      ]);
+      const items = [
+        ...(Array.isArray(completed) ? completed : []).map((event) => ({
+          ...event,
+          workflow_status: "completed",
+        })),
+        ...(Array.isArray(resolved) ? resolved : []).map((event) => ({
+          ...event,
+          workflow_status: "evaluated",
+        })),
+      ];
+      items.sort(
+        (left, right) =>
+          new Date(right.occurred_at).getTime() -
+          new Date(left.occurred_at).getTime()
+      );
+      setEvaluatedAlerts(items.slice(0, 20));
+      setEvaluatedAlertsError("");
+    } catch (err) {
+      setEvaluatedAlertsError(
+        err.message || "Unable to load evaluated alerts."
+      );
+    }
+  }, []);
 
   useEffect(() => {
     loadSummary();
-  }, [loadSummary]);
+    loadEvaluatedAlerts();
+  }, [loadEvaluatedAlerts, loadSummary]);
 
   const refreshLiveStatus = useCallback(async () => {
     if (liveStatusRequest.current) return;
@@ -100,6 +137,10 @@ export default function Home() {
     () => createLiveUpdateScheduler(loadSummary),
     [loadSummary]
   );
+  const evaluatedAlertsScheduler = useMemo(
+    () => createLiveUpdateScheduler(loadEvaluatedAlerts),
+    [loadEvaluatedAlerts]
+  );
 
   useEffect(() => {
     refreshLiveStatus();
@@ -107,6 +148,7 @@ export default function Home() {
       if (update.resync_required) {
         refreshLiveScheduler();
         summaryScheduler();
+        evaluatedAlertsScheduler();
         refreshStatus?.();
         return;
       }
@@ -146,6 +188,12 @@ export default function Home() {
         summaryScheduler();
       }
       if (
+        changedTables.has("nem_monitoring_events") ||
+        changedTables.has("nem_alerts")
+      ) {
+        evaluatedAlertsScheduler();
+      }
+      if (
         ["nem_monitoring_rules", "nem_rule_states", "nem_alerts"].some(
           (table) => changedTables.has(table)
         )
@@ -153,14 +201,20 @@ export default function Home() {
         refreshStatus?.();
       }
     });
-  }, [refreshLiveScheduler, refreshStatus, summaryScheduler]);
+  }, [
+    evaluatedAlertsScheduler,
+    refreshLiveScheduler,
+    refreshStatus,
+    summaryScheduler,
+  ]);
 
   useEffect(
     () => () => {
       refreshLiveScheduler.dispose();
       summaryScheduler.dispose();
+      evaluatedAlertsScheduler.dispose();
     },
-    [refreshLiveScheduler, summaryScheduler]
+    [evaluatedAlertsScheduler, refreshLiveScheduler, summaryScheduler]
   );
 
   const assetName = useMemo(
@@ -188,8 +242,8 @@ export default function Home() {
   );
 
   const finishAlertAction = async (action) => {
-    if (!alertToAcknowledge || busyId !== null) return;
-    const alert = alertToAcknowledge;
+    if (!alertAction || busyId !== null) return;
+    const alert = alertAction.alert;
     setBusyId(alert.id);
     setAckError("");
 
@@ -198,14 +252,15 @@ export default function Home() {
 
       await Promise.all([
         loadSummary(),
+        loadEvaluatedAlerts(),
         refreshLiveStatus(),
         refreshStatus?.(),
       ]);
-      setAlertToAcknowledge(null);
+      setAlertAction(null);
     } catch (err) {
       setAckError(
         err.message || (action === "complete"
-          ? "Unable to complete this rule."
+          ? "Unable to complete this alert."
           : "Unable to acknowledge this alert.")
       );
     } finally {
@@ -431,44 +486,138 @@ export default function Home() {
                     </div>
 
                     <div className="alert-actions">
-                      {alert.acknowledged_at && (
-                        <span
-                          className="ack-done"
-                          title={new Date(
-                            alert.acknowledged_at
-                          ).toLocaleString()}
-                        >
-                          Acknowledged
-                          {alert.acknowledged_by
-                            ? ` by ${alert.acknowledged_by}`
-                            : ""}
-                        </span>
-                      )}
-                      {alert.acknowledged_at && alert.rule_id ? (
+                      <span
+                        className={`alert-status ${
+                          alert.acknowledged_at
+                            ? "alert-status--acknowledged"
+                            : "alert-status--attention"
+                        }`}
+                        title={
+                          alert.acknowledged_at
+                            ? new Date(alert.acknowledged_at).toLocaleString()
+                            : undefined
+                        }
+                      >
+                        {alert.acknowledged_at
+                          ? `Acknowledged${
+                              alert.acknowledged_by
+                                ? ` by ${alert.acknowledged_by}`
+                                : ""
+                            }`
+                          : "Needs Attention"}
+                      </span>
+                      {alert.acknowledged_at ? (
                         <button
                           type="button"
                           className="btn-outline"
                           disabled={busyId === alert.id}
                           onClick={() => {
                             setAckError("");
-                            setAlertToAcknowledge(alert);
+                            setAlertAction({
+                              alert,
+                              action: "complete",
+                            });
                           }}
                         >
                           {busyId === alert.id ? "Saving…" : "Complete"}
                         </button>
-                      ) : !alert.acknowledged_at ? (
+                      ) : (
                         <button
                           type="button"
                           className="btn-outline"
                           disabled={busyId === alert.id}
                           onClick={() => {
                             setAckError("");
-                            setAlertToAcknowledge(alert);
+                            setAlertAction({
+                              alert,
+                              action: "acknowledge",
+                            });
                           }}
                         >
                           {busyId === alert.id ? "Saving…" : "Acknowledge"}
                         </button>
-                      ) : null}
+                      )}
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+
+          <section className="panel">
+            <div className="panel-head">
+              <h2>Evaluated / completed alerts</h2>
+              <span className="muted">{evaluatedAlerts.length} recent</span>
+            </div>
+            {evaluatedAlertsError && (
+              <p className="notice error" role="alert">
+                {evaluatedAlertsError}
+              </p>
+            )}
+            {evaluatedAlerts.length === 0 ? (
+              <EmptyState
+                art={false}
+                title="No evaluated or completed alerts"
+                lines={["Completed and cleared alerts will appear here."]}
+              />
+            ) : (
+              <ul className="alert-list evaluated-alert-list">
+                {evaluatedAlerts.map((event) => (
+                  <li className="alert-row evaluated-alert-row" key={event.id}>
+                    <i
+                      className={`lamp ${
+                        event.workflow_status === "completed"
+                          ? "ok"
+                          : "warning"
+                      }`}
+                      aria-hidden="true"
+                    />
+                    <div className="alert-body">
+                      <div className="alert-title">
+                        {event.rule_name || event.message}
+                      </div>
+                      {event.rule_name && (
+                        <div className="alert-msg">{event.message}</div>
+                      )}
+                      <div className="alert-meta">
+                        {event.asset_id != null ? (
+                          <Link
+                            to={`/assets/${event.asset_id}`}
+                            state={
+                              event.metadata?.maintenance_schedule_id
+                                ? { activeTab: "logbook" }
+                                : undefined
+                            }
+                          >
+                            {event.asset_name ||
+                              assetName.get(event.asset_id) ||
+                              `Asset ${event.asset_id}`}
+                          </Link>
+                        ) : (
+                          <span>{event.asset_name || "System"}</span>
+                        )}
+                        <span title={new Date(event.occurred_at).toLocaleString()}>
+                          {formatTime(event.occurred_at)}
+                        </span>
+                        {event.metadata?.completed_by && (
+                          <span>
+                            Completed by {event.metadata.completed_by}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="alert-actions">
+                      <span
+                        className={`alert-status ${
+                          event.workflow_status === "completed"
+                            ? "alert-status--completed"
+                            : "alert-status--evaluated"
+                        }`}
+                      >
+                        {event.workflow_status === "completed"
+                          ? "Completed"
+                          : "Evaluated"}
+                      </span>
                     </div>
                   </li>
                 ))}
@@ -523,18 +672,20 @@ export default function Home() {
           </section>
         </aside>
       </div>
-      {alertToAcknowledge && (
+      {alertAction && (
         <Modal
-          title="Confirm alert action"
+          title={
+            alertAction.action === "acknowledge"
+              ? "Acknowledge alert"
+              : "Complete alert"
+          }
           onClose={() => {
-            if (busyId === null) setAlertToAcknowledge(null);
+            if (busyId === null) setAlertAction(null);
           }}
         >
-          <p>
-            {alertToAcknowledge.rule_id
-              ? "Is the condition resolved and ready for this rule to be completed? Choose “No” to record your acknowledgement while keeping the alert active. Cancel makes no changes."
-              : "Acknowledge that you have seen this maintenance alert. Resolve it through maintenance management when the scheduled work is complete. Cancel makes no changes."}
-          </p>
+          <p>{alertAction.action === "acknowledge"
+            ? "Have you successfully handled this alert?"
+            : "Are you sure you want to mark this item as completed?"}</p>
           {ackError && (
             <p className="notice error" role="alert">{ackError}</p>
           )}
@@ -543,34 +694,22 @@ export default function Home() {
               type="button"
               className="btn-outline"
               disabled={busyId !== null}
-              onClick={() => setAlertToAcknowledge(null)}
+              onClick={() => setAlertAction(null)}
             >
               Cancel
             </button>
-            {!alertToAcknowledge.acknowledged_at && (
-              <button
-                type="button"
-                className="btn-outline"
-                disabled={busyId !== null}
-                onClick={acknowledgeAlert}
-              >
-                {busyId === alertToAcknowledge.id
-                  ? "Saving…"
-                  : "No, acknowledge only"}
-              </button>
-            )}
-            {alertToAcknowledge.rule_id && (
-              <button
-                type="button"
-                className="btn-primary"
-                disabled={busyId !== null}
-                onClick={completeAlert}
-              >
-                {busyId === alertToAcknowledge.id
-                  ? "Saving…"
-                  : "Yes, complete rule"}
-              </button>
-            )}
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={busyId !== null}
+              onClick={
+                alertAction.action === "acknowledge"
+                  ? acknowledgeAlert
+                  : completeAlert
+              }
+            >
+              {busyId === alertAction.alert.id ? "Saving…" : "Yes"}
+            </button>
           </div>
         </Modal>
       )}

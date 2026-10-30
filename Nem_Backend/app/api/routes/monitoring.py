@@ -13,6 +13,8 @@ from app.db.session import get_db
 from app.models import (
     Alert, 
     Asset,
+    MaintenanceRecord,
+    MaintenanceSchedule,
     MonitoringEvent,
     MonitoringRule,
     RuleState, # stores the current state associated with a rule and target
@@ -28,7 +30,6 @@ from app.schemas.monitoring import (
 from app.services.monitoring_engine import (
     emit_event,
     evaluate_rules,
-    set_rule_enabled_state,
     utc_now,
 )
 
@@ -279,30 +280,24 @@ def get_alert(alert_id: int, session: Session = Depends(get_db)) -> Alert:
 @router.post("/alerts/{alert_id}/acknowledge", response_model=AlertRead)
 def acknowledge_alert(
     alert_id: int,
-    request: Request,
     session: Session = Depends(get_db),
+    user: User = Depends(
+        require_roles("Administrator", "Supervisor", "Operator")
+    ),
 ) -> Alert:
-    # find the alert
     alert = session.scalar(select(Alert).where(Alert.id == alert_id).with_for_update())
     if alert is None:
         raise HTTPException(status_code=404, detail=f"Alert {alert_id} was not found")
-    user_id = getattr(request.state, "auth_user_id", None)
-    user = session.get(User, user_id) if user_id is not None else None
-    if user is None or not user.is_active:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    #Prevent acknowledging resolved alerts
     if alert.status != "active":
-        raise HTTPException(status_code=409, detail="Resolved alerts cannot be acknowledged")
-    # Check whether it has already been acknowledged
+        raise HTTPException(status_code=409, detail="Only active alerts can be acknowledged.")
     if alert.acknowledged_at is None:
         now = utc_now()
         alert.acknowledged_at = now
         alert.acknowledged_by = user.username
-        #Emit an acknowledgment event 
         emit_event(
             session,
             event_type="alert_acknowledged",
-            message="Active alert acknowledged; the underlying condition is not resolved.",
+            message="Alert acknowledged by the user.",
             occurred_at=now,
             asset_id=alert.target_asset_id,
             rule_id=alert.rule_id,
@@ -312,94 +307,121 @@ def acknowledge_alert(
                 "acknowledged_by": alert.acknowledged_by,
                 "acknowledged_at": now.isoformat(),
                 "identity_verified": True,
-                "outcome": "acknowledged_not_resolved",
+                "outcome": "acknowledged",
             },
         )
-        session.commit()
+        try:
+            session.commit()
+        except IntegrityError as error:
+            session.rollback()
+            raise HTTPException(status_code=409,detail="The alert could not be acknowledged because it changed concurrently.",) from error
         session.refresh(alert)
     return alert
 
-#When the alert is mark as completed
+# Completing an alert resolves only that alert instance, not its monitoring rule.
 @router.post("/alerts/{alert_id}/complete", response_model=AlertRead)
-def complete_rule_from_alert(
+def complete_alert(
     alert_id: int,
-    request: Request,
     session: Session = Depends(get_db),
+    user: User = Depends(require_roles("Administrator", "Supervisor", "Operator")),
 ) -> Alert:
     alert = session.scalar(select(Alert).where(Alert.id == alert_id).with_for_update())
     if alert is None:
         raise HTTPException(status_code=404, detail=f"Alert {alert_id} was not found")
     if alert.status != "active":
-        raise HTTPException(status_code=409, detail="Resolved alerts cannot complete a rule")
-    user_id = getattr(request.state, "auth_user_id", None)
-    user = session.get(User, user_id) if user_id is not None else None
-    if user is None or not user.is_active:
-        raise HTTPException(status_code=401, detail="Authentication required")
-    if alert.rule_id is None:
-        raise HTTPException(status_code=409,detail="Maintenance alerts must be resolved through maintenance scheduling.",)
-
-    rule = session.scalar(
-        select(MonitoringRule)
-        .where(MonitoringRule.id == alert.rule_id)
-        .with_for_update()
-    )
-    if (
-        rule is None
-        or rule.is_archived
-        or rule.lifecycle_status != "in_progress"
-        or not rule.is_enabled
-    ):
-        raise HTTPException(status_code=409,detail="Only an active monitoring rule can be completed from an alert.",)
-    state = session.scalar(
-        select(RuleState).where(
-            RuleState.rule_id == rule.id,
-            RuleState.target_asset_id == alert.target_asset_id,
-        )
-    )
-    if state is None or state.status not in {"warning", "alert"}:
-        raise HTTPException(status_code=409,detail="The monitoring rule no longer has an active warning or alert.",)
-
-    now = utc_now()
+        raise HTTPException(status_code=409, detail="Only active alerts can be completed.")
     if alert.acknowledged_at is None:
-        alert.acknowledged_at = now
-        alert.acknowledged_by = user.username
+        raise HTTPException(status_code=409,detail="Acknowledge this alert before completing it.",)
+    now = utc_now()
+
+    if alert.maintenance_schedule_id is not None:
+        schedule = session.scalar(
+            select(MaintenanceSchedule)
+            .where(MaintenanceSchedule.id == alert.maintenance_schedule_id)
+            .with_for_update()
+        )
+        if (
+            schedule is None
+            or schedule.current_due_date != alert.maintenance_due_date
+            or schedule.current_occurrence_id is None
+        ):
+            raise HTTPException(status_code=409,detail="The maintenance due alert no longer has a current occurrence.",)
+        occurrence = session.scalar(
+            select(MaintenanceRecord)
+            .where(MaintenanceRecord.id == schedule.current_occurrence_id)
+            .with_for_update()
+        )
+        if (
+            occurrence is None
+            or occurrence.schedule_id != schedule.id
+            or occurrence.planned_due_date != alert.maintenance_due_date
+            or occurrence.status not in {"planned", "in_progress"}
+        ):
+            raise HTTPException(status_code=409,detail="The maintenance occurrence is no longer available to complete.",)
+        from app.api.routes.maintenance import ( _authorize_operator_due_occurrence, complete_maintenance_record,)
+
+        _authorize_operator_due_occurrence(
+            session,
+            occurrence,
+            user,
+            action="complete",
+        )
+        completed_at = occurrence.actual_completed_at or now
+        occurrence.actual_completed_at = completed_at
+        alert.status = "resolved"
+        alert.resolved_at = completed_at
+        alert.last_updated_at = completed_at
         emit_event(
             session,
-            event_type="alert_acknowledged",
-            message="Alert acknowledged as resolved and ready for completion.",
+            event_type="alert_completed",
+            message=f"Maintenance due alert completed: {schedule.title}.",
+            occurred_at=completed_at,
+            asset_id=alert.target_asset_id,
+            alert_id=alert.id,
+            severity=alert.severity,
+            metadata={
+                "maintenance_schedule_id": schedule.id,
+                "maintenance_record_id": occurrence.id,
+                "maintenance_due_date": alert.maintenance_due_date.isoformat(),
+                "completed_by": user.username,
+                "completed_at": completed_at.isoformat(),
+                "outcome": "maintenance_occurrence_completed",
+            },
+        )
+        try:
+            complete_maintenance_record(occurrence.id, session, user)
+        except HTTPException:
+            session.rollback()
+            raise
+        except IntegrityError:
+            session.rollback()
+            raise HTTPException(status_code=409,detail="The alert could not be completed because related data changed.",)
+    else:
+        alert.status = "resolved"
+        alert.resolved_at = now
+        alert.last_updated_at = now
+        emit_event(
+            session,
+            event_type="alert_completed",
+            message=f"Alert completed: {alert.title}.",
             occurred_at=now,
             asset_id=alert.target_asset_id,
             rule_id=alert.rule_id,
             alert_id=alert.id,
             severity=alert.severity,
             metadata={
-                "acknowledged_by": user.username,
-                "acknowledged_at": now.isoformat(),
-                "identity_verified": True,
-                "outcome": "acknowledged_and_completed",
+                "completed_by": user.username,
+                "completed_at": now.isoformat(),
+                "acknowledged_by": alert.acknowledged_by,
+                "acknowledged_at": alert.acknowledged_at.isoformat(),
+                "outcome": "alert_instance_completed",
             },
         )
-    set_rule_enabled_state(session, rule, False, at=now)
-    rule.lifecycle_status = "completed"
-    rule.completed_at = now
-    emit_event(
-        session,
-        event_type="rule_completed",
-        message=f"Rule '{rule.name}' marked completed after alert resolution.",
-        occurred_at=now,
-        asset_id=rule.target_asset_id,
-        rule_id=rule.id,
-        alert_id=alert.id,
-        severity=alert.severity,
-        metadata={
-            "acknowledged_by": alert.acknowledged_by,
-            "acknowledged_at": alert.acknowledged_at.isoformat(),
-            "completed_by": user.username,
-            "completed_at": now.isoformat(),
-            "outcome": "rule_successfully_completed",
-        },
-    )
-    session.commit()
+        try:
+            session.commit()
+        except IntegrityError as error:
+            session.rollback()
+            raise HTTPException(status_code=409,detail="The alert could not be completed because it changed concurrently.",) from error
     session.refresh(alert)
     return alert
 
@@ -480,10 +502,7 @@ def delete_event(
         session.commit()
     except IntegrityError as error:
         session.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail="This event is referenced by retained history and cannot be deleted.",
-        ) from error
+        raise HTTPException(status_code=409,detail="This event is referenced by retained history and cannot be deleted.",) from error
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 # A reading arrives -> the monitoring engine evaluates the rules -> dashboard request the status -> dashboard display the alert -> an operator acknowledge the alert -> the dashboard displays the history

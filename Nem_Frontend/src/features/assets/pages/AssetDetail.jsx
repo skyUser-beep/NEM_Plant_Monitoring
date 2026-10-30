@@ -1955,16 +1955,16 @@ const filteredEvents = [...events]
             <button
               type="button"
               className="btn-primary"
-              disabled={isSupervisor || !canManageRules}
+              disabled={!canManageRules}
               title={
                 isSupervisor
-                  ? "Supervisors cannot add monitoring rules."
+                  ? "Supervisors can assign predefined monitoring rules only."
                   : !canManageRules
                     ? "You do not have permission to manage monitoring rules."
                     : "Add rule"
               }
               onClick={() => {
-                if (isSupervisor || !canManageRules) return;
+                if (!canManageRules) return;
                 setModal("addRuleOptions");
               }}
             >
@@ -2968,6 +2968,8 @@ const filteredEvents = [...events]
       <button
         type="button"
         className="rule-type-option"
+        disabled={isSupervisor}
+        title={isSupervisor ? "Only Administrators can create monitoring rules." : undefined}
         onClick={() => setModal("ruleTypeOptions")}
       >
         <strong>Create a Rule</strong>
@@ -2989,6 +2991,8 @@ const filteredEvents = [...events]
       <button
         type="button"
         className="rule-type-option"
+        disabled={isSupervisor}
+        title={isSupervisor ? "Only Administrators can copy monitoring rules." : undefined}
         onClick={() => setModal("copyRules")}
       >
         <strong>Copy from Another Asset</strong>

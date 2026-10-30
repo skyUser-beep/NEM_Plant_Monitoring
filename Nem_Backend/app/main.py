@@ -268,6 +268,27 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             and policy_path.startswith("/api/v1/rule-templates/")
             and len(policy_path.rstrip("/").split("/")) == 5
         )
+        rule_path_segments = policy_path.rstrip("/").split("/")
+        supervisor_rule_create_or_copy = (
+            role == "Supervisor"
+            and method == "POST"
+            and (
+                policy_path.rstrip("/") == "/api/v1/rules"
+                or (
+                    len(rule_path_segments) == 6
+                    and rule_path_segments[:4] == ["", "api", "v1", "assets"]
+                    and rule_path_segments[4].isdecimal()
+                    and rule_path_segments[5] == "rules"
+                )
+                or (
+                    len(rule_path_segments) == 7
+                    and rule_path_segments[:4] == ["", "api", "v1", "assets"]
+                    and rule_path_segments[4].isdecimal()
+                    and rule_path_segments[5] == "rules"
+                    and rule_path_segments[6] in {"copy", "usage", "time"}
+                )
+            )
+        )
         supervisor_plc_status_read = (
             role == "Supervisor"
             and method in {"GET", "HEAD"}
@@ -329,7 +350,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             and not safe_method
             and policy_path != "/api/v1/auth/logout"
             and (
-                (
+                supervisor_rule_create_or_copy
+                or (
                     admin_only_write
                     and not supervisor_content_create
                     and not supervisor_rule_template_update
