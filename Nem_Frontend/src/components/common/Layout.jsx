@@ -158,6 +158,11 @@ export default function Layout() {
     }
   });
 
+  const [compactViewport, setCompactViewport] = useState(() =>
+    window.matchMedia("(max-width: 800px)").matches
+  );
+  const [compactRailOpen, setCompactRailOpen] = useState(false);
+
   const [treeOpen, setTreeOpen] = useState(true);
   const [signingOut, setSigningOut] = useState(false);
 
@@ -210,6 +215,17 @@ export default function Layout() {
       
     }
   }, [railOpen]);
+
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 800px)");
+    const updateViewport = () => {
+      setCompactViewport(query.matches);
+      if (!query.matches) setCompactRailOpen(false);
+    };
+
+    query.addEventListener("change", updateViewport);
+    return () => query.removeEventListener("change", updateViewport);
+  }, []);
 
   const loadAssets = useCallback(async () => {
     try {
@@ -374,10 +390,14 @@ export default function Layout() {
     <NavLink
       to={to}
       end={end}
+      aria-label={label}
       className={({ isActive }) =>
         "rail-item" + (isActive ? " active" : "")
       }
       title={label}
+      onClick={() => {
+        if (compactViewport) setCompactRailOpen(false);
+      }}
     >
       <Icon size={20} />
       <span className="rail-label">{label}</span>
@@ -390,6 +410,9 @@ export default function Layout() {
       : link.online
         ? "Backend connected"
         : link.reason;
+  const navigationExpanded = compactViewport
+    ? compactRailOpen
+    : railOpen;
 
   return (
     <div className="app">
@@ -443,7 +466,10 @@ export default function Layout() {
       </header>
 
       <div className="body">
-        <nav className={"rail" + (railOpen ? " open" : "")} aria-label="Main">
+        <nav
+          className={"rail" + (navigationExpanded ? " open" : "")}
+          aria-label="Main"
+        >
           <div className="rail-main">
             {navItem("/", HomeIcon, "Overview", true)}
             {navItem("/assets", TreeIcon, "Assets")}
@@ -454,9 +480,16 @@ export default function Layout() {
 
           <button
             className="rail-item rail-toggle"
-            onClick={() => setRailOpen((open) => !open)}
-            title={railOpen ? "Collapse navigation" : "Expand navigation"}
-            aria-label={railOpen ? "Collapse navigation" : "Expand navigation"}
+            onClick={() => {
+              if (compactViewport) {
+                setCompactRailOpen((open) => !open);
+              } else {
+                setRailOpen((open) => !open);
+              }
+            }}
+            title={navigationExpanded ? "Collapse navigation" : "Expand navigation"}
+            aria-label={navigationExpanded ? "Collapse navigation" : "Expand navigation"}
+            aria-expanded={navigationExpanded}
           >
             <DoubleChevron size={18} />
             <span className="rail-label">Collapse</span>

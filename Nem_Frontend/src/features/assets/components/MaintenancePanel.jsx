@@ -587,8 +587,9 @@ const openEdit = (record) => {
         due_date: dueDate,
       });
       setDialog(null);
-      setNotice(`Next maintenance approved for ${displayDate(dueDate)}.`);
+      setNotice(`Next maintenance is now scheduled for ${displayDate(dueDate)}.`);
       await Promise.all([loadSchedules(), loadRecords()]);
+      await onChanged?.();
     } catch (requestError) {
       setError(requestError.message || "Could not approve the next occurrence.");
     } finally {
@@ -916,6 +917,32 @@ const openEdit = (record) => {
             Maintenance records and schedules are view-only for your role.
           </p>
         )}
+        {schedules
+          .filter((schedule) => schedule.approval_status === "pending")
+          .map((schedule) => (
+            <section className="maintenance-next-approval" key={schedule.id}>
+              <div>
+                <strong>{schedule.title}</strong>
+                <small>
+                  Next occurrence proposed for {displayDate(schedule.proposed_due_date)}
+                  {schedule.recurrence_enabled
+                    ? ` · Every ${schedule.recurrence_interval} ${schedule.recurrence_unit}`
+                    : ""}
+                </small>
+              </div>
+              <button
+                type="button"
+                className="btn-primary"
+                disabled={busy || !canManageMaintenance}
+                onClick={() => {
+                  setApprovalDate(schedule.proposed_due_date || "");
+                  setDialog({ kind: "approval", record: schedule });
+                }}
+              >
+                Review next date
+              </button>
+            </section>
+          ))}
         {loading ? (
           <p className="muted" role="status">Loading maintenance history…</p>
         ) : visibleRecords.length === 0 ? (

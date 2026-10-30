@@ -19,7 +19,10 @@
 }
 .gm-grid {
   display: grid; gap: 16px; max-width: 1400px;
-  grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr));
+}
+@media (min-width: 1800px) {
+  .gm-grid { max-width: min(1920px, 100%); margin-inline: auto; }
 }
 .gm-card {
   display: flex; flex-direction: column; gap: 14px; min-height: 150px; padding: 20px;

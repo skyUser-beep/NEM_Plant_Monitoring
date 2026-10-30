@@ -18,6 +18,13 @@ import { CheckIcon } from "../../../components/common/Icons.jsx";
 const num = (value) =>
   typeof value === "number" && Number.isFinite(value) ? value : 0;
 
+function localCalendarDay(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function Tile({ tone, label, value, to, hint }) {
   const nav = useNavigate();
   const lit = value > 0;
@@ -54,6 +61,8 @@ export default function Home() {
   const [alertAction, setAlertAction] = useState(null);
   const [evaluatedAlerts, setEvaluatedAlerts] = useState([]);
   const [evaluatedAlertsError, setEvaluatedAlertsError] = useState("");
+  const [evaluatedDay, setEvaluatedDay] = useState(() => localCalendarDay());
+  const evaluatedDayRef = useRef(evaluatedDay);
 
   const loadSummary = useCallback(async () => {
     try {
@@ -105,9 +114,63 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    let midnightTimer;
+    let disposed = false;
+
+    const refreshDay = () => {
+      const currentDay = localCalendarDay();
+      if (evaluatedDayRef.current !== currentDay) {
+        evaluatedDayRef.current = currentDay;
+        setEvaluatedDay(currentDay);
+        void loadEvaluatedAlerts();
+      }
+    };
+
+    const scheduleMidnightRefresh = () => {
+      if (disposed) return;
+      window.clearTimeout(midnightTimer);
+      const now = new Date();
+      const nextMidnight = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate() + 1
+      );
+      midnightTimer = window.setTimeout(() => {
+        refreshDay();
+        scheduleMidnightRefresh();
+      }, Math.max(0, nextMidnight.getTime() - now.getTime()) + 100);
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") refreshDay();
+      scheduleMidnightRefresh();
+    };
+
+    scheduleMidnightRefresh();
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      disposed = true;
+      window.clearTimeout(midnightTimer);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [loadEvaluatedAlerts]);
+
+  useEffect(() => {
     loadSummary();
     loadEvaluatedAlerts();
   }, [loadEvaluatedAlerts, loadSummary]);
+
+  const visibleEvaluatedAlerts = useMemo(
+    () =>
+      evaluatedAlerts.filter((event) => {
+        const occurredAt = new Date(event.occurred_at);
+        return (
+          !Number.isNaN(occurredAt.getTime()) &&
+          localCalendarDay(occurredAt) === evaluatedDay
+        );
+      }),
+    [evaluatedAlerts, evaluatedDay]
+  );
 
   const refreshLiveStatus = useCallback(async () => {
     if (liveStatusRequest.current) return;
@@ -547,22 +610,22 @@ export default function Home() {
           <section className="panel">
             <div className="panel-head">
               <h2>Evaluated / completed alerts</h2>
-              <span className="muted">{evaluatedAlerts.length} recent</span>
+              <span className="muted">{visibleEvaluatedAlerts.length} today</span>
             </div>
             {evaluatedAlertsError && (
               <p className="notice error" role="alert">
                 {evaluatedAlertsError}
               </p>
             )}
-            {evaluatedAlerts.length === 0 ? (
+            {visibleEvaluatedAlerts.length === 0 ? (
               <EmptyState
                 art={false}
                 title="No evaluated or completed alerts"
-                lines={["Completed and cleared alerts will appear here."]}
+                lines={["Today's completed and cleared alerts will appear here."]}
               />
             ) : (
               <ul className="alert-list evaluated-alert-list">
-                {evaluatedAlerts.map((event) => (
+                {visibleEvaluatedAlerts.map((event) => (
                   <li className="alert-row evaluated-alert-row" key={event.id}>
                     <i
                       className={`lamp ${

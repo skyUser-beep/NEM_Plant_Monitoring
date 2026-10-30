@@ -362,6 +362,36 @@
   line-height: 1.6;
 }
 
+.asset-page .maintenance-panel .maintenance-next-approval {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 12px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+
+.asset-page .maintenance-panel .maintenance-next-approval > div {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.asset-page .maintenance-panel .maintenance-next-approval strong {
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.asset-page .maintenance-panel .maintenance-next-approval small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 /* Form controls — preserve current theme */
 .maintenance-panel input:not([type="checkbox"]),
 .maintenance-panel select,

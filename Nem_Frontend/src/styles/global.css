@@ -1369,3 +1369,58 @@ html[data-theme="dark"] .topbar > .icon-btn:hover {
   width: 100%;
   margin-top: 24px;
 }
+
+@media (max-width: 560px) {
+  .topbar .auth-logout {
+    font-size: 0;
+    gap: 0;
+    padding-inline: 0;
+  }
+}
+
+@media (max-width: 800px) {
+  .rail {
+    align-self: flex-start;
+    width: 56px;
+    height: auto;
+    z-index: 20;
+  }
+
+  .rail.open {
+    position: fixed;
+    inset: 0 auto auto 0;
+    width: min(212px, calc(100vw - 56px));
+    max-height: 100dvh;
+    overflow-y: auto;
+    z-index: 40;
+    box-shadow: var(--shadow);
+  }
+
+  .rail.open .rail-label {
+    display: inline;
+  }
+}
+
+@media (min-width: 1800px) {
+  .admin-users-page,
+  .panel,
+  .panel-white,
+  .panel-gray,
+  .page-head,
+  .annunciator,
+  .home-grid,
+  .asset-head,
+  .tabs,
+  .machine-strip,
+  .values-panel,
+  .toolbar,
+  .rule-list,
+  .plc-panel.wide {
+    max-width: min(1920px, 100%);
+    margin-inline: auto;
+  }
+
+  .modal {
+    max-height: 92dvh;
+  }
+}

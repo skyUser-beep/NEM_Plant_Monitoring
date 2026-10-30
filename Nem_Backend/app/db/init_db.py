@@ -334,6 +334,42 @@ def initialize_database(engine: Engine) -> None:
                     "WHERE status = 'completed' AND archived_at IS NULL"
                 )
             )
+        record_inspector = inspect(engine)
+        has_occurrence_unique = any(
+            constraint.get("name") == "uq_maintenance_occurrence_schedule_due"
+            for constraint in record_inspector.get_unique_constraints(
+                "nem_maintenance_records"
+            )
+        ) or any(
+            index.get("name") == "uq_maintenance_occurrence_schedule_due"
+            and index.get("unique")
+            for index in record_inspector.get_indexes("nem_maintenance_records")
+        )
+        if not has_occurrence_unique:
+            with engine.begin() as connection:
+                duplicate = connection.execute(
+                    text(
+                        "SELECT schedule_id, planned_due_date, COUNT(*) "
+                        "FROM nem_maintenance_records "
+                        "WHERE schedule_id IS NOT NULL "
+                        "AND planned_due_date IS NOT NULL "
+                        "GROUP BY schedule_id, planned_due_date "
+                        "HAVING COUNT(*) > 1 LIMIT 1"
+                    )
+                ).first()
+                if duplicate is not None:
+                    raise RuntimeError(
+                        "Cannot enable recurring occurrence uniqueness: "
+                        "duplicate scheduled maintenance records exist for "
+                        f"schedule {duplicate.schedule_id} on {duplicate.planned_due_date}."
+                    )
+                connection.execute(
+                    text(
+                            "CREATE UNIQUE INDEX IF NOT EXISTS "
+                            "uq_maintenance_occurrence_schedule_due "
+                            "ON nem_maintenance_records (schedule_id, planned_due_date)"
+                        )
+                    )
 
     if "nem_alerts" in table_names and "nem_maintenance_schedules" in table_names:
         alert_columns = {column["name"]
