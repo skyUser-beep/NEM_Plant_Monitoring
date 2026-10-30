@@ -1,8 +1,17 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate, useOutletContext, useParams } from "react-router-dom";
+import {
+  useLocation,
+  useNavigate,
+  useOutletContext,
+  useParams,
+} from "react-router-dom";
 import { api } from "../../../services/api.js";
 import { useAuth } from "../../auth/AuthContext.jsx";
 import { buildAssetMonitoringRule } from "../../assets/rules/monitoringRuleFlow.js";
+import {
+  rememberNavigationOrigin,
+  returnToNavigationOrigin,
+} from "../../../utils/navigation.js";
 import "./RuleCreatePage.css";
 
 const TITLES = {
@@ -31,6 +40,7 @@ export default function RuleCreatePage() {
   const canManageRules = ["Administrator", "Supervisor"].includes(user?.role);
   const { id, kind } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { assets = [] } = useOutletContext() || {};
   const assetId = Number(id);
   const asset = assets.find((item) => Number(item.id) === assetId);
@@ -109,8 +119,20 @@ export default function RuleCreatePage() {
     };
   }, [assetId, canManageRules]);
 
+  const returnFallback = {
+    pathname: `/assets/${id}`,
+    state: { activeTab: "status" },
+  };
+  useEffect(() => {
+    rememberNavigationOrigin(location.state?.from);
+  }, [location.state?.from]);
+
   const goBack = () =>
-    navigate(`/assets/${id}`, { state: { activeTab: "status" } });
+    returnToNavigationOrigin(
+      navigate,
+      location.state?.from,
+      returnFallback
+    );
 
   const updateField = (event) => {
     const { name, value } = event.target;
@@ -160,12 +182,12 @@ export default function RuleCreatePage() {
         }
       );
       await api.post(`/assets/${assetId}/rules`, rule);
-      navigate(`/assets/${assetId}`, {
-        state: {
-          activeTab: "status",
-          createdNotice: `Rule "${rule.name}" created successfully.`,
-        },
-      });
+      returnToNavigationOrigin(
+        navigate,
+        location.state?.from,
+        returnFallback,
+        { notice: { text: `Rule "${rule.name}" created successfully.` } }
+      );
     } catch (requestError) {
       setError(requestError.message || "Could not create the monitoring rule.");
     } finally {

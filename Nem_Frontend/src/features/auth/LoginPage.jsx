@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "./AuthContext.jsx";
+import { resolveNavigationOrigin } from "../../utils/navigation.js";
 
 export default function LoginPage() {
   const { user, loading, login } = useAuth();
@@ -21,7 +22,15 @@ export default function LoginPage() {
     try {
       await login(username, password);
       const destination = location.state?.from;
-      navigate(destination ? `${destination.pathname}${destination.search || ""}` : "/", { replace: true });
+      const target = resolveNavigationOrigin(destination, "/");
+      navigate(
+        {
+          pathname: target.pathname,
+          search: target.search,
+          hash: target.hash,
+        },
+        { replace: true, state: target.state }
+      );
     } catch (loginError) {
       setError(loginError.message || "Sign-in failed.");
     } finally {

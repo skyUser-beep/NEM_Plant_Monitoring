@@ -1,6 +1,6 @@
 
 import React from "react";
-import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { Link, Navigate, Route, Routes, useLocation } from "react-router-dom";
 
 import Layout from "../components/common/Layout.jsx";
 
@@ -30,6 +30,18 @@ import AdminUsersPage from "../features/auth/AdminUsersPage.jsx";
 import { useAuth } from "../features/auth/AuthContext.jsx";
 import { ConfirmationProvider } from "../components/common/UI.jsx";
 import ExportConfigurationPage from "../features/configuration/pages/ExportConfigurationPage.jsx";
+
+function NotFoundPage() {
+  return (
+    <main className="panel">
+      <h1 className="page-title">Page not found</h1>
+      <p className="muted">The requested page does not exist.</p>
+      <Link className="btn-outline" to="/">
+        Return to overview
+      </Link>
+    </main>
+  );
+}
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -157,7 +169,7 @@ export default function App() {
 />
 
 {/* Fallback — keep this last */}
-<Route path="*" element={<Home />} />
+<Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>
     </ConfirmationProvider>

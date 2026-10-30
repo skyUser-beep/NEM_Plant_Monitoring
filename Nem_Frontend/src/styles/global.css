@@ -260,7 +260,7 @@ button:disabled { opacity: 0.55; cursor: default; }
 .badge.role { background: var(--action-soft); color: var(--action); }
 
 
-.annunciator { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); max-width: 1440px; margin-bottom: 18px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-panel); overflow: hidden; }
+.annunciator { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); width: 100%; max-width: 1440px; margin-bottom: 18px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-panel); overflow: hidden; }
 .tile { position: relative; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; text-align: left; padding: 20px 20px 16px; border: none; border-right: 1px solid var(--line); background: var(--surface); color: var(--ink); min-height: 128px; }
 .tile:last-child { border-right: none; }
 .tile::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 5px; background: var(--line); }
@@ -274,13 +274,14 @@ button:disabled { opacity: 0.55; cursor: default; }
 .tile.lit.warning::before { background: var(--warn-lamp); }
 .tile.lit.warning .tile-value { color: var(--warn); }
 
-.home-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 320px); gap: 18px; max-width: 1440px; align-items: stretch; }
-.home-grid .panel { max-width: none; margin-bottom: 0; }
-.home-left-stack, .home-right-column { display: contents; }
-.home-left-stack > .panel:first-child { grid-column: 1; grid-row: 1; }
-.home-left-stack > .panel:nth-child(2) { grid-column: 1; grid-row: 2; }
-.home-left-stack > .panel:nth-child(3) { grid-column: 1; grid-row: 3; }
-.home-right-column > .panel { grid-column: 2; grid-row: 1; }
+.home { width: 100%; min-width: 0; }
+.home-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(260px, 1fr); grid-template-areas: "attention coverage" "evaluated evaluated" "rules rules"; gap: 18px; width: 100%; max-width: 1440px; align-items: stretch; }
+.home-grid .panel { width: 100%; max-width: none; margin: 0; }
+.home-left-stack, .home-right-column { display: flex; min-width: 0; }
+.home-left-stack { grid-area: attention; }
+.home-right-column { grid-area: coverage; }
+.home-evaluated-panel { grid-area: evaluated; }
+.home-rules-panel { grid-area: rules; }
 .home-right-column > .panel .panel-head { margin-bottom: 10px; }
 
 .all-clear { display: flex; align-items: center; gap: 14px; padding: 10px 2px; }
@@ -440,12 +441,14 @@ button:disabled { opacity: 0.55; cursor: default; }
   .tree { width: 260px; }
 }
 @media (max-width: 800px) {
-  .home-grid { grid-template-columns: 1fr; }
-  .home-left-stack { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
-  .home-right-column { display: block; min-width: 0; }
-  .home-left-stack > .panel:first-child,
-  .home-left-stack > .panel:nth-child(2),
-  .home-right-column > .panel { grid-column: auto; grid-row: auto; }
+  .home-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "attention"
+      "coverage"
+      "evaluated"
+      "rules";
+  }
   .app-title, .link-state { display: none; }
   .rail.open { width: 56px; }
   .rail.open .rail-label { display: none; }
@@ -1050,7 +1053,7 @@ html[data-theme="light"] .copy-rules-modal textarea {
   min-width: 0;
 }
 
-@container workspace (max-width: 1050px) {
+@container workspace (max-width: 720px) {
   .annunciator {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1062,32 +1065,16 @@ html[data-theme="light"] .copy-rules-modal textarea {
   .tile:nth-child(-n + 2) {
     border-bottom: 1px solid var(--line);
   }
-
-  .home-grid {
-    grid-template-columns: minmax(0, 1fr) minmax(250px, 300px);
-  }
 }
 
-@container workspace (max-width: 900px) {
+@container workspace (max-width: 720px) {
   .home-grid {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .home-left-stack {
-    display: flex;
-    flex-direction: column;
-    gap: 18px;
-  }
-
-  .home-right-column {
-    display: block;
-  }
-
-  .home-left-stack > .panel:first-child,
-  .home-left-stack > .panel:nth-child(2),
-  .home-right-column > .panel {
-    grid-column: auto;
-    grid-row: auto;
+    grid-template-areas:
+      "attention"
+      "coverage"
+      "evaluated"
+      "rules";
   }
 
   .machine-strip > * {

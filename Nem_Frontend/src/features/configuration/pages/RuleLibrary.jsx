@@ -12,6 +12,11 @@ import {
 import { api } from "../../../services/api.js";
 import { useAuth } from "../../auth/AuthContext.jsx";
 import {
+  captureNavigationOrigin,
+  consumeNavigationFlash,
+  returnToNavigationOrigin,
+} from "../../../utils/navigation.js";
+import {
   CreateModal,
   EmptyState,
   Modal,
@@ -572,10 +577,22 @@ export default function RuleLibrary() {
   const [ruleRequests, setRuleRequests] = useState([]);
   const [requestsLoading, setRequestsLoading] = useState(false);
   const [reviewingId, setReviewingId] = useState(null);
-  const [requestStatus, setRequestStatus] = useState("pending");
+  const [requestStatus, setRequestStatus] = useState(
+    ["pending", "approved", "declined"].includes(
+      location.state?.ruleLibraryRequestStatus
+    )
+      ? location.state.ruleLibraryRequestStatus
+      : "pending"
+  );
   const [suggestionChoiceOpen, setSuggestionChoiceOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("all");
+  const [search, setSearch] = useState(
+    location.state?.ruleLibrarySearch || ""
+  );
+  const [status, setStatus] = useState(
+    ["all", "true", "false"].includes(location.state?.ruleLibraryStatus)
+      ? location.state.ruleLibraryStatus
+      : "all"
+  );
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [suggesting, setSuggesting] = useState(false);
@@ -612,33 +629,73 @@ const loadPendingRequests = async (filterStatus = requestStatus) => {
 };
 
 useEffect(() => {
-  if (location.state?.maintenanceSuggestionSubmitted) {
+  const flash = consumeNavigationFlash(location);
+  if (flash?.text) {
     setMessage({
-      text: "Maintenance suggestion submitted for Administrator review.",
-      error: false,
+      text: flash.text,
+      error: Boolean(flash.error),
     });
-    navigate(location.pathname, {
-      replace: true,
-      state: {},
-    });
-    return;
+  }
+  if (flash?.state) {
+    if (typeof flash.state.ruleLibrarySearch === "string") {
+      setSearch(flash.state.ruleLibrarySearch);
+    }
+    if (
+      ["all", "true", "false"].includes(flash.state.ruleLibraryStatus)
+    ) {
+      setStatus(flash.state.ruleLibraryStatus);
+    }
+    if (
+      ["pending", "approved", "declined"].includes(
+        flash.state.ruleLibraryRequestStatus
+      )
+    ) {
+      setRequestStatus(flash.state.ruleLibraryRequestStatus);
+    }
   }
 
-  if (location.state?.openCreate) {
+  let shouldClearTransientState = false;
+  const retainedState = { ...(location.state || {}) };
+  if (
+    retainedState.maintenanceSuggestionSubmitted ||
+    retainedState.createdNotice
+  ) {
+    setMessage({
+      text:
+        retainedState.createdNotice ||
+        "Maintenance suggestion submitted for Administrator review.",
+      error: false,
+    });
+    delete retainedState.maintenanceSuggestionSubmitted;
+    delete retainedState.createdNotice;
+    shouldClearTransientState = true;
+  }
+
+  if (retainedState.openCreate) {
     if (canCreateRules) {
       setSuggesting(false);
       setEditing(null);
       setModalOpen(true);
     }
+    delete retainedState.openCreate;
+    shouldClearTransientState = true;
+  }
 
-    navigate(location.pathname, {
-      replace: true,
-      state: {},
-    });
+  if (shouldClearTransientState) {
+    navigate(
+      `${location.pathname}${location.search}${location.hash}`,
+      {
+        replace: true,
+        state: retainedState,
+      }
+    );
   }
 }, [
   location.pathname,
+  location.search,
+  location.hash,
   location.state,
+  location.key,
   navigate,
   canCreateRules,
 ]);
@@ -870,7 +927,18 @@ const reviewRequest = async (request, action) => {
 
   return (
     <main className="rule-library-page">
-      <button className="link-btn" onClick={() => navigate("/configuration")}>‹ Back to Configuration</button>
+      <button
+        className="link-btn"
+        onClick={() =>
+          returnToNavigationOrigin(
+            navigate,
+            location.state?.from,
+            "/configuration"
+          )
+        }
+      >
+        ‹ Back
+      </button>
       <div className="rule-library-heading">
         <div>
           <h1 className="page-title">Monitoring Rule Library</h1>
@@ -1131,7 +1199,16 @@ const reviewRequest = async (request, action) => {
         className="btn-outline"
         onClick={() => {
           setSuggestionChoiceOpen(false);
-          navigate("/maintenance/suggest");
+          navigate("/maintenance/suggest", {
+            state: {
+              from: captureNavigationOrigin(location, {
+                ...location.state,
+                ruleLibrarySearch: search,
+                ruleLibraryStatus: status,
+                ruleLibraryRequestStatus: requestStatus,
+              }),
+            },
+          });
         }}
       >
         <Plus size={17} />

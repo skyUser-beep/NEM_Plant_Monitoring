@@ -1,6 +1,11 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate, useOutletContext } from "react-router-dom";
+import {
+  Link,
+  useLocation,
+  useNavigate,
+  useOutletContext,
+} from "react-router-dom";
 import { api } from "../../../services/api.js";
 import {
   createLiveUpdateScheduler,
@@ -14,6 +19,7 @@ import {
 } from "../../../utils/format.js";
 import { EmptyState, Modal } from "../../../components/common/UI.jsx";
 import { CheckIcon } from "../../../components/common/Icons.jsx";
+import { captureNavigationOrigin } from "../../../utils/navigation.js";
 
 const num = (value) =>
   typeof value === "number" && Number.isFinite(value) ? value : 0;
@@ -27,13 +33,18 @@ function localCalendarDay(date = new Date()) {
 
 function Tile({ tone, label, value, to, hint }) {
   const nav = useNavigate();
+  const location = useLocation();
   const lit = value > 0;
 
   return (
     <button
       type="button"
       className={"tile " + tone + (lit ? " lit" : "")}
-      onClick={() => nav(to)}
+      onClick={() =>
+        nav(to, {
+          state: { from: captureNavigationOrigin(location) },
+        })
+      }
       title={hint}
     >
       <span className="tile-label">{label}</span>
@@ -53,6 +64,7 @@ export default function Home() {
   const [summary, setSummary] = useState(null);
   const [plcStatus, setPlcStatus] = useState(null);
   const [monitoringStates, setMonitoringStates] = useState([]);
+  const previousRuleStatusSignature = useRef(null);
   const [liveStatusError, setLiveStatusError] = useState("");
   const liveStatusRequest = useRef(false);
   const [error, setError] = useState("");
@@ -206,13 +218,36 @@ export default function Home() {
   );
 
   useEffect(() => {
+    const signature = monitoringStates
+      .map((state) => `${state.rule_id}:${state.status}`)
+      .sort()
+      .join("|");
+
+    if (
+      previousRuleStatusSignature.current === null &&
+      monitoringStates.length === 0
+    ) {
+      return;
+    }
+
+    if (previousRuleStatusSignature.current === null) {
+      previousRuleStatusSignature.current = signature;
+      return;
+    }
+
+    if (previousRuleStatusSignature.current !== signature) {
+      previousRuleStatusSignature.current = signature;
+      summaryScheduler();
+    }
+  }, [monitoringStates, summaryScheduler]);
+
+  useEffect(() => {
     refreshLiveStatus();
     return subscribeLiveUpdates((update) => {
       if (update.resync_required) {
         refreshLiveScheduler();
         summaryScheduler();
         evaluatedAlertsScheduler();
-        refreshStatus?.();
         return;
       }
       if (update.type === "disconnected") {
@@ -240,10 +275,8 @@ export default function Home() {
       if (
         [
           "assets",
-          "readings",
-          "nem_readings",
+          "variables",
           "nem_monitoring_rules",
-          "nem_rule_states",
           "nem_alerts",
           "nem_maintenance_schedules",
         ].some((table) => changedTables.has(table))
@@ -256,18 +289,10 @@ export default function Home() {
       ) {
         evaluatedAlertsScheduler();
       }
-      if (
-        ["nem_monitoring_rules", "nem_rule_states", "nem_alerts"].some(
-          (table) => changedTables.has(table)
-        )
-      ) {
-        refreshStatus?.();
-      }
     });
   }, [
     evaluatedAlertsScheduler,
     refreshLiveScheduler,
-    refreshStatus,
     summaryScheduler,
   ]);
 
@@ -607,7 +632,32 @@ export default function Home() {
             )}
           </section>
 
+        </div>
+
+        <aside className="home-right-column">
           <section className="panel">
+            <div className="panel-head">
+              <h2>Monitoring coverage</h2>
+            </div>
+
+            <Link to="/assets" className="coverage">
+              <span className="coverage-num">
+                {monitored}
+                <small> of {total} assets</small>
+              </span>
+
+              <span className="meter" aria-hidden="true">
+                <i style={{ width: `${coverage}%` }} />
+              </span>
+
+              <span className="muted">
+                have enabled rules monitoring active variables
+              </span>
+            </Link>
+          </section>
+        </aside>
+
+        <section className="panel home-evaluated-panel">
             <div className="panel-head">
               <h2>Evaluated / completed alerts</h2>
               <span className="muted">{visibleEvaluatedAlerts.length} today</span>
@@ -686,9 +736,9 @@ export default function Home() {
                 ))}
               </ul>
             )}
-          </section>
+        </section>
 
-          <section className="panel">
+        <section className="panel home-rules-panel">
             <div className="panel-head">
               <h2>Rules by state</h2>
             </div>
@@ -709,31 +759,7 @@ export default function Home() {
                 </li>
                 ))}
             </ul>
-          </section>
-        </div>
-
-        <aside className="home-right-column">
-          <section className="panel">
-            <div className="panel-head">
-              <h2>Monitoring coverage</h2>
-            </div>
-
-            <Link to="/assets" className="coverage">
-              <span className="coverage-num">
-                {monitored}
-                <small> of {total} assets</small>
-              </span>
-
-              <span className="meter" aria-hidden="true">
-                <i style={{ width: `${coverage}%` }} />
-              </span>
-
-              <span className="muted">
-                have enabled rules monitoring active variables
-              </span>
-            </Link>
-          </section>
-        </aside>
+        </section>
       </div>
       {alertAction && (
         <Modal

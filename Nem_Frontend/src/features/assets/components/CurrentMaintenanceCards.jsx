@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Eye, Pencil, Trash2 } from "lucide-react";
 import { api } from "../../../services/api.js";
 import { useAuth } from "../../auth/AuthContext.jsx";
+import { captureNavigationOrigin } from "../../../utils/navigation.js";
 import {
   EmptyState,
   FloatingMenu,
@@ -33,9 +34,11 @@ export default function CurrentMaintenanceCards({
   onCompleted,
   onCompletedRecordsCount,
   showCompleted = false,
+  navigationState,
 }) {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const confirm = useConfirmation();
   const isAdministrator = user?.role === "Administrator";
   const canManageMaintenance = ["Administrator", "Supervisor"].includes(user?.role);
@@ -72,7 +75,14 @@ const openEdit = (record) => {
     navigate(
       `/assets/${assetId}/maintenance/schedules/${record.schedule_id}/edit`,
       {
-        state: { maintenanceRecord: record },
+        state: {
+          from: captureNavigationOrigin(location, {
+            ...(navigationState || location.state),
+            activeTab:
+              navigationState?.activeTab || location.state?.activeTab || "status",
+          }),
+          maintenanceRecord: record,
+        },
       }
     );
     return;
@@ -81,7 +91,14 @@ const openEdit = (record) => {
   navigate(
     `/assets/${assetId}/maintenance/${record.id}/edit`,
     {
-      state: { maintenanceRecord: record },
+      state: {
+        from: captureNavigationOrigin(location, {
+          ...(navigationState || location.state),
+          activeTab:
+            navigationState?.activeTab || location.state?.activeTab || "status",
+        }),
+        maintenanceRecord: record,
+      },
     }
   );
 };

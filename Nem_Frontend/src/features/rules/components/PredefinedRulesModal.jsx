@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "../../../services/api.js";
+import { captureNavigationOrigin } from "../../../utils/navigation.js";
 import "./PredefinedRulesModal.css";
 import {
   ShieldCheck,
@@ -71,8 +72,14 @@ function ruleConditionSummary(rule) {
   return rule.description || "Asset-level monitoring rule";
 }
 
-export default function PredefinedRulesModal({ assetId, onClose, onAssigned }) {
+export default function PredefinedRulesModal({
+  assetId,
+  onClose,
+  onAssigned,
+  navigationState,
+}) {
   const navigate = useNavigate();
+  const location = useLocation();
   const [rules, setRules] = useState([]);
   const [selected, setSelected] = useState(() => new Set());
   const [variableMappings, setVariableMappings] = useState({});
@@ -219,7 +226,14 @@ export default function PredefinedRulesModal({ assetId, onClose, onAssigned }) {
                       className="link-btn"
                       onClick={() => {
                         onClose();
-                        navigate("/configuration/rules");
+                        navigate("/configuration/rules", {
+                          state: {
+                            from: captureNavigationOrigin(
+                              location,
+                              navigationState || location.state
+                            ),
+                          },
+                        });
                       }}
                     >
                       Open the Monitoring Rule Library

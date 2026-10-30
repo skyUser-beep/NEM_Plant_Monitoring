@@ -4,6 +4,10 @@ import { api } from "../../../services/api.js";
 import { useAuth } from "../../auth/AuthContext.jsx";
 import "./CreateMaintenanceSchedulePage.css";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
+import {
+  rememberNavigationOrigin,
+  returnToNavigationOrigin,
+} from "../../../utils/navigation.js";
 
 const TYPES = [
   "preventive",
@@ -79,6 +83,19 @@ export default function CreateMaintenanceSchedulePage() {
   const location = useLocation();
   const isSuggestion = location.pathname === "/maintenance/suggest";
   const maintenanceRecord = location.state?.maintenanceRecord;
+  const returnFallback = isSuggestion
+    ? {
+        pathname: "/configuration/rules",
+        state: { maintenanceSuggestionSubmitted: true },
+      }
+    : {
+        pathname: `/assets/${id}`,
+        state: { activeTab: "logbook" },
+      };
+
+  useEffect(() => {
+    rememberNavigationOrigin(location.state?.from);
+  }, [location.state?.from]);
 
   const [form, setForm] = useState({
     title: "",
@@ -324,13 +341,11 @@ export default function CreateMaintenanceSchedulePage() {
   };
 
   const goToMaintenanceLog = () => {
-    if (isSuggestion) {
-      navigate("/configuration/rules");
-      return;
-    }
-    navigate(`/assets/${id}`, {
-      state: { activeTab: "logbook" },
-    });
+    returnToNavigationOrigin(
+      navigate,
+      location.state?.from,
+      returnFallback
+    );
   };
 
   const handleSubmit = async (event) => {
@@ -477,20 +492,20 @@ export default function CreateMaintenanceSchedulePage() {
         });
       }
 
-      if (isSuggestion) {
-        navigate("/configuration/rules", {
-          state: { maintenanceSuggestionSubmitted: true },
-        });
-      } else {
-        navigate(`/assets/${id}`, {
-          state: {
-            activeTab: "logbook",
-            createdNotice: isEdit
-              ? "Maintenance schedule updated."
-              : "Maintenance schedule created.",
+      returnToNavigationOrigin(
+        navigate,
+        location.state?.from,
+        returnFallback,
+        {
+          notice: {
+            text: isSuggestion
+              ? "Maintenance suggestion submitted for Administrator review."
+              : isEdit
+                ? "Maintenance schedule updated."
+                : "Maintenance schedule created.",
           },
-        });
-      }
+        }
+      );
     } catch (requestError) {
       console.error(
         "Maintenance schedule request failed:",
@@ -533,7 +548,7 @@ export default function CreateMaintenanceSchedulePage() {
           onClick={goToMaintenanceLog}
           disabled={busy}
         >
-          ← Back to Maintenance log
+          {isSuggestion ? "← Back to Rule Library" : "← Back"}
         </button>
 
         <div>

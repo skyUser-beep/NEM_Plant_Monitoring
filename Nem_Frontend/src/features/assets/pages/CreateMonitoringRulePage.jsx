@@ -11,6 +11,10 @@ import {
 } from "react-router-dom";
 
 import { api } from "../../../services/api.js";
+import {
+  rememberNavigationOrigin,
+  returnToNavigationOrigin,
+} from "../../../utils/navigation.js";
 import { useAuth } from "../../auth/AuthContext.jsx";
 import {
   buildAssetMonitoringRule,
@@ -223,6 +227,21 @@ export default function CreateMonitoringRulePage() {
 
   const navigate = useNavigate();
   const location = useLocation();
+  const returnFallback = {
+    pathname: `/assets/${id}`,
+    state: { activeTab: "status" },
+  };
+  const returnToAsset = (notice = null) =>
+    returnToNavigationOrigin(
+      navigate,
+      location.state?.from,
+      returnFallback,
+      { notice: notice ? { text: notice } : null }
+    );
+
+  useEffect(() => {
+    rememberNavigationOrigin(location.state?.from);
+  }, [location.state?.from]);
 
   const editingRule = location.state?.editingRule ?? null;
 
@@ -575,13 +594,11 @@ export default function CreateMonitoringRulePage() {
         );
       }
 
-      navigate(`/assets/${assetId}`, {
-        state: {
-          createdNotice: isEdit
-            ? `Rule "${rule.name}" updated successfully.`
-            : `Rule "${rule.name}" created successfully.`,
-        },
-      });
+      returnToAsset(
+        isEdit
+          ? `Rule "${rule.name}" updated successfully.`
+          : `Rule "${rule.name}" created successfully.`
+      );
     } catch (err) {
       setError(
         err.message ||
@@ -610,11 +627,9 @@ export default function CreateMonitoringRulePage() {
         <button
           type="button"
           className="btn-outline"
-          onClick={() =>
-            navigate(`/assets/${id}`)
-          }
+          onClick={() => returnToAsset()}
         >
-          ← Back to Maintenance log
+          ← Back to asset
         </button>
       </main>
     );
@@ -627,9 +642,7 @@ export default function CreateMonitoringRulePage() {
           <button
             type="button"
             className="link-btn"
-            onClick={() =>
-              navigate(`/assets/${assetId}`)
-            }
+            onClick={() => returnToAsset()}
           >
             ← Back to {assetName}
           </button>
@@ -790,9 +803,7 @@ export default function CreateMonitoringRulePage() {
             type="button"
             className="btn-outline"
             disabled={saving}
-            onClick={() =>
-              navigate(`/assets/${assetId}`)
-            }
+            onClick={() => returnToAsset()}
           >
             Cancel
           </button>

@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { Eye, FileText, Pencil, Timer, Trash2 } from "lucide-react";
 import { api } from "../../../services/api.js";
 import { useAuth } from "../../auth/AuthContext.jsx";
+import { captureNavigationOrigin } from "../../../utils/navigation.js";
 import {
   EmptyState,
   FloatingMenu,
@@ -147,7 +148,11 @@ function validateForm(values, requirePlannedDates) {
   return "";
 }
 
-export default function MaintenancePanel({ assetId, onChanged }) {
+export default function MaintenancePanel({
+  assetId,
+  onChanged,
+  navigationState,
+}) {
   const confirm = useConfirmation();
   const { user } = useAuth();
   const isAdministrator = user?.role === "Administrator";
@@ -155,6 +160,7 @@ export default function MaintenancePanel({ assetId, onChanged }) {
   const canAddMaintenance = user?.role === "Administrator";
   const canManageMaintenance = ["Administrator", "Supervisor"].includes(user?.role);
   const navigate = useNavigate();
+  const location = useLocation();
   const [records, setRecords] = useState([]);
   const [schedules, setSchedules] = useState([]);
   const [schedulesLoaded, setSchedulesLoaded] = useState(false);
@@ -386,13 +392,28 @@ export default function MaintenancePanel({ assetId, onChanged }) {
 
   const openCreate = () => {
     if (!canManageMaintenance) return;
-    navigate(`/assets/${assetId}/maintenance/schedules/new`);
+    navigate(`/assets/${assetId}/maintenance/schedules/new`, {
+      state: {
+        from: captureNavigationOrigin(location, {
+          ...(navigationState || location.state),
+          activeTab: "logbook",
+        }),
+      },
+    });
   };
 
 const openScheduleEdit = (schedule) => {
   if (!canManageMaintenance) return;
   navigate(
-    `/assets/${assetId}/maintenance/schedules/${schedule.id}/edit`
+    `/assets/${assetId}/maintenance/schedules/${schedule.id}/edit`,
+    {
+      state: {
+        from: captureNavigationOrigin(location, {
+          ...(navigationState || location.state),
+          activeTab: "logbook",
+        }),
+      },
+    }
   );
 };
 
@@ -405,14 +426,30 @@ const openEdit = (record) => {
   if (record.schedule_id) {
     navigate(
       `/assets/${assetId}/maintenance/schedules/${record.schedule_id}/edit`,
-      { state: { maintenanceRecord: record } }
+      {
+        state: {
+          from: captureNavigationOrigin(location, {
+            ...(navigationState || location.state),
+            activeTab: "logbook",
+          }),
+          maintenanceRecord: record,
+        },
+      }
     );
     return;
   }
 
   navigate(
     `/assets/${assetId}/maintenance/${record.id}/edit`,
-    { state: { maintenanceRecord: record } }
+    {
+      state: {
+        from: captureNavigationOrigin(location, {
+          ...(navigationState || location.state),
+          activeTab: "logbook",
+        }),
+        maintenanceRecord: record,
+      },
+    }
   );
 };
 
@@ -897,7 +934,7 @@ const openEdit = (record) => {
     setError("");
     setNotice("");
 
-    navigate(`/assets/${assetId}/maintenance/schedules/new`);
+    openCreate();
   }}
   disabled={!canAddMaintenance || busy}
   title={
@@ -1293,7 +1330,14 @@ const openEdit = (record) => {
                 className="rule-type-option"
                 onClick={() => {
                   setLegacyRuleOptionsOpen(false);
-                  navigate(legacyRulePath(assetId, choice.kind));
+                  navigate(legacyRulePath(assetId, choice.kind), {
+                    state: {
+                      from: captureNavigationOrigin(location, {
+                        ...(navigationState || location.state),
+                        activeTab: "logbook",
+                      }),
+                    },
+                  });
                 }}
               >
                 <strong>{choice.label}</strong>

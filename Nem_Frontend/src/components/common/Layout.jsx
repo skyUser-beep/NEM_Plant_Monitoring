@@ -315,9 +315,7 @@ export default function Layout() {
           console.error("Asset refresh after live update failed.", error);
         });
       }
-      if (["nem_monitoring_rules", "nem_rule_states"].some((table) =>
-        changedTables.has(table)
-      )) {
+      if (changedTables.has("nem_monitoring_rules")) {
         refreshRules().catch((error) => {
           console.error("Rule refresh after live update failed.", error);
         });

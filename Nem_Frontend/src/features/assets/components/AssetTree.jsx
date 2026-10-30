@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { api } from "../../../services/api.js";
 import { CreateModal } from "../../../components/common/UI.jsx";
+import { captureNavigationOrigin } from "../../../utils/navigation.js";
 import {
   AssetIcon,
   ChevronDown,
@@ -22,6 +23,7 @@ const HEALTH_TEXT = {
 
 export default function AssetTree({ assets = [], selectedId, onRefresh }) {
   const nav = useNavigate();
+  const location = useLocation();
   const [q, setQ] = useState("");
   const [open, setOpen] = useState({});
   const [onlyRules, setOnlyRules] = useState(false);
@@ -212,7 +214,11 @@ export default function AssetTree({ assets = [], selectedId, onRefresh }) {
             type="button"
             title="Rules with alert status"
             aria-label="Rules with alert status"
-            onClick={() => nav("/rules/alert")}
+            onClick={() =>
+              nav("/rules/alert", {
+                state: { from: captureNavigationOrigin(location) },
+              })
+            }
           >
             <AlertDiamond size={17} />
           </button>
@@ -221,7 +227,11 @@ export default function AssetTree({ assets = [], selectedId, onRefresh }) {
             type="button"
             title="Rules with warning status"
             aria-label="Rules with warning status"
-            onClick={() => nav("/rules/warning")}
+            onClick={() =>
+              nav("/rules/warning", {
+                state: { from: captureNavigationOrigin(location) },
+              })
+            }
           >
             <WarnTriangle size={17} />
           </button>

@@ -1,12 +1,16 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { api } from "../../../services/api.js";
 import { EmptyState, StatusBadge } from "../../../components/common/UI.jsx";
 import { BackIcon } from "../../../components/common/Icons.jsx";
+import { returnToNavigationOrigin } from "../../../utils/navigation.js";
 
 export default function AlertRules() {
   const { kind } = useParams();
   const nav = useNavigate();
+  const location = useLocation();
+  const returnToHome = () =>
+    returnToNavigationOrigin(nav, location.state?.from, "/");
   const [rules, setRules] = useState(null);
   const [error, setError] = useState("");
   const lifecycleStatuses = ["activated", "suspended", "deactivated", "completed"];
@@ -38,7 +42,7 @@ export default function AlertRules() {
 
   return (
     <div>
-      <button className="link-btn" onClick={() => nav(-1)}>
+      <button className="link-btn" onClick={returnToHome}>
         <BackIcon size={14} /> Back
       </button>
       <h1 className="page-title">{heading}</h1>
